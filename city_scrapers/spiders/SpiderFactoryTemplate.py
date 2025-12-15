@@ -1,5 +1,5 @@
 """
-This file dynamically creates spider classes for the spider factory mixin agencies using.
+This file dynamically creates spider classes for the spider factory mixin that agencies use.
 """
 
 from city_scrapers.mixins.SpiderFactoryTemplate import SpiderfactorytemplateMixin

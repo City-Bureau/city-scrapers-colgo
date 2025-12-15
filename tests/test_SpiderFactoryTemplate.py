@@ -9,7 +9,7 @@ from city_scrapers.spiders import SpiderFactoryTemplate
 ExampleSpider1 = SpiderFactoryTemplate.ExampleSpider1
 
 test_response = file_response(
-    join(dirname(__file__), "files", "example_spider_1.html"),
+    join(dirname(__file__), "files", "SpiderFactoryTemplate.html"),
     url="https://www.example.com/",
 )
 spider = ExampleSpider1()

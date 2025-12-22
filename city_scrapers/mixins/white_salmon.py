@@ -19,9 +19,12 @@ Example:
         agency_id = "27"
 """
 
+import re
 from datetime import datetime
 
+import scrapy
 from city_scrapers_core.constants import (
+    CANCELLED,
     CITY_COUNCIL,
     COMMISSION,
     COMMITTEE,
@@ -72,10 +75,10 @@ class WhiteSalmonMixin(CityScrapersSpider, metaclass=WhiteSalmonMixinMeta):
         "?field_microsite_tid=All&field_microsite_tid_1={agency_id}"
     )
 
-    # Default location for White Salmon meetings
-    location = {
-        "name": "White Salmon City Hall",
-        "address": "100 N Main St., White Salmon, WA 98672",
+    # Default location fallback
+    default_location = {
+        "name": "",
+        "address": "",
     }
 
     def start_requests(self):
@@ -95,8 +98,6 @@ class WhiteSalmonMixin(CityScrapersSpider, metaclass=WhiteSalmonMixinMeta):
 
     def request(self, url, callback):
         """Create a scrapy request."""
-        import scrapy
-
         return scrapy.Request(url=url, callback=callback)
 
     def parse(self, response):
@@ -143,7 +144,7 @@ class WhiteSalmonMixin(CityScrapersSpider, metaclass=WhiteSalmonMixinMeta):
             end=None,
             all_day=False,
             time_notes="",
-            location=self.location,
+            location=self._parse_location(response),
             links=self._parse_links(response),
             source=response.url,
         )
@@ -186,9 +187,36 @@ class WhiteSalmonMixin(CityScrapersSpider, metaclass=WhiteSalmonMixinMeta):
 
         return None
 
+    def _parse_location(self, response):
+        """
+        Parse location from meeting detail page.
+
+        Looks for "Location:" pattern in the page content.
+
+        Returns:
+            dict: Location with name and address keys
+        """
+        # Look for location in the body content
+        body_text = response.css(".field-name-body .field-item").get() or ""
+
+        # Pattern: "Location: Name, Address"
+        location_match = re.search(
+            r"Location:\s*([^,]+),\s*(.+?)(?:</p>|<br|$)",
+            body_text,
+            re.IGNORECASE,
+        )
+
+        if location_match:
+            name = location_match.group(1).strip()
+            address = location_match.group(2).strip()
+            # Clean up any HTML tags
+            address = re.sub(r"<[^>]+>", "", address).strip()
+            return {"name": name, "address": address}
+
+        return self.default_location
+
     def _parse_description(self, response):
         """Extract meeting description if available."""
-        # Get text from the main content area, excluding structured elements
         return ""
 
     def _parse_classification(self, title):
@@ -228,23 +256,17 @@ class WhiteSalmonMixin(CityScrapersSpider, metaclass=WhiteSalmonMixinMeta):
         links = []
 
         # Agenda link
-        agenda_href = response.css(
-            ".field-name-field-agenda-link a::attr(href)"
-        ).get()
+        agenda_href = response.css(".field-name-field-agenda-link a::attr(href)").get()
         if agenda_href:
             links.append({"href": agenda_href, "title": "Agenda"})
 
         # Packet link
-        packet_href = response.css(
-            ".field-name-field-packets-link a::attr(href)"
-        ).get()
+        packet_href = response.css(".field-name-field-packets-link a::attr(href)").get()
         if packet_href:
             links.append({"href": packet_href, "title": "Agenda Packet"})
 
         # Video link
-        video_href = response.css(
-            ".field-name-field-video-link a::attr(href)"
-        ).get()
+        video_href = response.css(".field-name-field-video-link a::attr(href)").get()
         if video_href:
             links.append({"href": video_href, "title": "Video"})
 
@@ -271,8 +293,6 @@ class WhiteSalmonMixin(CityScrapersSpider, metaclass=WhiteSalmonMixinMeta):
         if text:
             text_lower = text.lower()
             if "cancel" in text_lower:
-                from city_scrapers_core.constants import CANCELLED
-
                 return CANCELLED
 
         return super()._get_status(item)

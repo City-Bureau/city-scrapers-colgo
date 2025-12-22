@@ -1,0 +1,92 @@
+"""
+Tests for colgo_white_salmon_city_council spider.
+"""
+
+from datetime import datetime
+from os.path import dirname, join
+
+from city_scrapers_core.constants import CITY_COUNCIL, PASSED
+from city_scrapers_core.utils import file_response
+from freezegun import freeze_time
+
+from city_scrapers.spiders.colgo_white_salmon_city_council import (
+    ColgoWhiteSalmonCityCouncilSpider,
+)
+
+# Test the detail page parsing
+detail_response = file_response(
+    join(dirname(__file__), "files", "colgo_white_salmon_city_council_detail.html"),
+    url="https://www.whitesalmonwa.gov/citycouncil/page/city-council-meeting-152",
+)
+
+spider = ColgoWhiteSalmonCityCouncilSpider()
+
+freezer = freeze_time("2025-12-22")
+freezer.start()
+parsed_items = list(spider.parse_meeting(detail_response))
+freezer.stop()
+
+parsed_item = parsed_items[0] if parsed_items else None
+
+
+def test_count():
+    assert len(parsed_items) == 1
+
+
+def test_title():
+    assert parsed_item["title"] == "City Council Meeting"
+
+
+def test_description():
+    assert parsed_item["description"] == ""
+
+
+def test_classification():
+    assert parsed_item["classification"] == CITY_COUNCIL
+
+
+def test_start():
+    assert parsed_item["start"] == datetime(2025, 12, 17, 18, 0)
+
+
+def test_end():
+    assert parsed_item["end"] is None
+
+
+def test_time_notes():
+    assert parsed_item["time_notes"] == ""
+
+
+def test_id():
+    assert (
+        parsed_item["id"] == "colgo_white_salmon_city_council/202512171800/x/city_council_meeting"  # noqa
+    )
+
+
+def test_status():
+    assert parsed_item["status"] == PASSED
+
+
+def test_location():
+    assert parsed_item["location"] == {
+        "name": "White Salmon City Hall",
+        "address": "100 N Main St., White Salmon, WA 98672",
+    }
+
+
+def test_source():
+    assert (
+        parsed_item["source"]
+        == "https://www.whitesalmonwa.gov/citycouncil/page/city-council-meeting-152"
+    )
+
+
+def test_links():
+    links = parsed_item["links"]
+    # Check that we have agenda and packet links
+    assert any(link["title"] == "Agenda" for link in links)
+    assert any(link["title"] == "Agenda Packet" for link in links)
+
+
+def test_all_day():
+    assert parsed_item["all_day"] is False

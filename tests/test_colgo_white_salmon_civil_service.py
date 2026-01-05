@@ -5,6 +5,7 @@ Tests for colgo_white_salmon_civil_service spider.
 from datetime import datetime
 from os.path import dirname, join
 
+import pytest
 from city_scrapers_core.constants import COMMISSION, PASSED
 from city_scrapers_core.utils import file_response
 from freezegun import freeze_time
@@ -44,51 +45,55 @@ def test_calendar_request_url():
 # ============================================================================
 # Test detail page parsing (source: detail HTML → Meeting item)
 # ============================================================================
-detail_response = file_response(
-    join(dirname(__file__), "files", "colgo_white_salmon_civil_service_detail.html"),
-    url=(
-        "https://www.whitesalmonwa.gov/civilservice/page/"
-        "civil-service-commission-meeting-1"
-    ),
-)
+@pytest.fixture(scope="module")
+def parsed_items():
+    detail_response = file_response(
+        join(
+            dirname(__file__), "files", "colgo_white_salmon_civil_service_detail.html"
+        ),
+        url=(
+            "https://www.whitesalmonwa.gov/civilservice/page/"
+            "civil-service-commission-meeting-1"
+        ),
+    )
+    with freeze_time("2025-12-22"):
+        return list(spider.parse_meeting(detail_response))
 
-freezer = freeze_time("2025-12-22")
-freezer.start()
-parsed_items = list(spider.parse_meeting(detail_response))
-freezer.stop()
 
-parsed_item = parsed_items[0] if parsed_items else None
+@pytest.fixture(scope="module")
+def parsed_item(parsed_items):
+    return parsed_items[0] if parsed_items else None
 
 
-def test_count():
+def test_count(parsed_items):
     assert len(parsed_items) == 1
 
 
-def test_title():
+def test_title(parsed_item):
     assert parsed_item["title"] == "Civil Service Commission Meeting"
 
 
-def test_description():
+def test_description(parsed_item):
     assert "Civil Service Commission will meet" in parsed_item["description"]
 
 
-def test_classification():
+def test_classification(parsed_item):
     assert parsed_item["classification"] == COMMISSION
 
 
-def test_start():
+def test_start(parsed_item):
     assert parsed_item["start"] == datetime(2025, 1, 15, 17, 0)
 
 
-def test_end():
+def test_end(parsed_item):
     assert parsed_item["end"] is None
 
 
-def test_time_notes():
+def test_time_notes(parsed_item):
     assert parsed_item["time_notes"] == ""
 
 
-def test_id():
+def test_id(parsed_item):
     expected = (
         "colgo_white_salmon_civil_service/202501151700/x/"
         "civil_service_commission_meeting"
@@ -96,18 +101,18 @@ def test_id():
     assert parsed_item["id"] == expected
 
 
-def test_status():
+def test_status(parsed_item):
     assert parsed_item["status"] == PASSED
 
 
-def test_location():
+def test_location(parsed_item):
     assert parsed_item["location"] == {
         "name": "City's Council Chambers",
         "address": "119 NE Church Ave, White Salmon, WA 98672",
     }
 
 
-def test_source():
+def test_source(parsed_item):
     expected = (
         "https://www.whitesalmonwa.gov/civilservice/page/"
         "civil-service-commission-meeting-1"
@@ -115,10 +120,10 @@ def test_source():
     assert parsed_item["source"] == expected
 
 
-def test_links():
+def test_links(parsed_item):
     links = parsed_item["links"]
     assert any(link["title"] == "Agenda" for link in links)
 
 
-def test_all_day():
+def test_all_day(parsed_item):
     assert parsed_item["all_day"] is False

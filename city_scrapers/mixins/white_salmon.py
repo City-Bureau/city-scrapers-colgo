@@ -240,13 +240,13 @@ class WhiteSalmonMixin(CityScrapersSpider, metaclass=WhiteSalmonMixinMeta):
         for selector, title in link_configs:
             href = response.css(selector).get()
             if href:
-                links.append({"href": href, "title": title})
+                links.append({"href": response.urljoin(href), "title": title})
 
         # Supporting documents
         for doc in response.css(".other_attachments .filefield-file a"):
             href = doc.css("::attr(href)").get()
             title = doc.css("::text").get()
             if href and title:
-                links.append({"href": href, "title": title.strip()})
+                links.append({"href": response.urljoin(href), "title": title.strip()})
 
         return links

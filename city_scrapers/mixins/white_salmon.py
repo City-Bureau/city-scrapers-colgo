@@ -21,10 +21,10 @@ Example:
 
 import re
 from datetime import datetime
+from typing import ClassVar
 
 import scrapy
 from city_scrapers_core.constants import (
-    CANCELLED,
     CITY_COUNCIL,
     COMMISSION,
     COMMITTEE,
@@ -76,7 +76,7 @@ class WhiteSalmonMixin(CityScrapersSpider, metaclass=WhiteSalmonMixinMeta):
     )
 
     # Default location fallback
-    default_location = {
+    default_location: ClassVar[dict[str, str]] = {
         "name": "",
         "address": "",
     }
@@ -94,11 +94,7 @@ class WhiteSalmonMixin(CityScrapersSpider, metaclass=WhiteSalmonMixinMeta):
             target_date = today + relativedelta(months=i)
             month_str = target_date.strftime("%Y-%m")
             url = self.calendar_url.format(month=month_str, agency_id=self.agency_id)
-            yield self.request(url=url, callback=self.parse)
-
-    def request(self, url, callback):
-        """Create a scrapy request."""
-        return scrapy.Request(url=url, callback=callback)
+            yield scrapy.Request(url=url, callback=self.parse)
 
     def parse(self, response):
         """
@@ -117,7 +113,7 @@ class WhiteSalmonMixin(CityScrapersSpider, metaclass=WhiteSalmonMixinMeta):
 
         for link in meeting_links:
             full_url = response.urljoin(link)
-            yield self.request(url=full_url, callback=self.parse_meeting)
+            yield scrapy.Request(url=full_url, callback=self.parse_meeting)
 
     def parse_meeting(self, response):
         """
@@ -183,7 +179,7 @@ class WhiteSalmonMixin(CityScrapersSpider, metaclass=WhiteSalmonMixinMeta):
                 # Return naive datetime (timezone handled by spider)
                 return dt.replace(tzinfo=None)
             except ValueError:
-                pass
+                self.logger.debug(f"Failed to parse datetime: {dt_str}")
 
         return None
 
@@ -217,7 +213,9 @@ class WhiteSalmonMixin(CityScrapersSpider, metaclass=WhiteSalmonMixinMeta):
 
     def _parse_description(self, response):
         """Extract meeting description if available."""
-        return ""
+        selector = response.css(".field-name-body .field-item.even")
+        description = selector.xpath("string()").get()
+        return description.strip() if description else ""
 
     def _parse_classification(self, title):
         """
@@ -278,21 +276,3 @@ class WhiteSalmonMixin(CityScrapersSpider, metaclass=WhiteSalmonMixinMeta):
                 links.append({"href": href, "title": title.strip()})
 
         return links
-
-    def _get_status(self, item, text=""):
-        """
-        Determine meeting status from title text.
-
-        Args:
-            item: Meeting item
-            text (str): Title text to check for status indicators
-
-        Returns:
-            str: Status constant
-        """
-        if text:
-            text_lower = text.lower()
-            if "cancel" in text_lower:
-                return CANCELLED
-
-        return super()._get_status(item)

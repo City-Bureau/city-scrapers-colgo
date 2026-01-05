@@ -1,28 +1,28 @@
 """
-Tests for colgo_white_salmon_city_council spider.
+Tests for colgo_white_salmon_civil_service spider.
 """
 
 from datetime import datetime
 from os.path import dirname, join
 
-from city_scrapers_core.constants import CITY_COUNCIL, PASSED
+from city_scrapers_core.constants import COMMISSION, PASSED
 from city_scrapers_core.utils import file_response
 from freezegun import freeze_time
 
-from city_scrapers.spiders.colgo_white_salmon_city_council import (
-    ColgoWhiteSalmonCityCouncilSpider,
+from city_scrapers.spiders.colgo_white_salmon_civil_service import (
+    ColgoWhiteSalmonCivilServiceSpider,
 )
 
-spider = ColgoWhiteSalmonCityCouncilSpider()
+spider = ColgoWhiteSalmonCivilServiceSpider()
 
 # ============================================================================
 # Test calendar page parsing (source: calendar HTML → meeting detail URLs)
 # ============================================================================
 calendar_response = file_response(
-    join(dirname(__file__), "files", "colgo_white_salmon_city_council_calendar.html"),
+    join(dirname(__file__), "files", "colgo_white_salmon_civil_service_calendar.html"),
     url=(
         "https://www.whitesalmonwa.gov/calendar/month/2025-01"
-        "?field_microsite_tid=All&field_microsite_tid_1=27"
+        "?field_microsite_tid=All&field_microsite_tid_1=231"
     ),
 )
 
@@ -38,15 +38,18 @@ def test_calendar_request_count():
 def test_calendar_request_url():
     """Test that extracted URLs point to meeting detail pages."""
     urls = [req.url for req in calendar_requests]
-    assert any("city-council-meeting" in url for url in urls)
+    assert any("civil-service-commission-meeting" in url for url in urls)
 
 
 # ============================================================================
 # Test detail page parsing (source: detail HTML → Meeting item)
 # ============================================================================
 detail_response = file_response(
-    join(dirname(__file__), "files", "colgo_white_salmon_city_council_detail.html"),
-    url="https://www.whitesalmonwa.gov/citycouncil/page/city-council-meeting-152",
+    join(dirname(__file__), "files", "colgo_white_salmon_civil_service_detail.html"),
+    url=(
+        "https://www.whitesalmonwa.gov/civilservice/page/"
+        "civil-service-commission-meeting-1"
+    ),
 )
 
 freezer = freeze_time("2025-12-22")
@@ -62,20 +65,19 @@ def test_count():
 
 
 def test_title():
-    assert parsed_item["title"] == "City Council Meeting"
+    assert parsed_item["title"] == "Civil Service Commission Meeting"
 
 
 def test_description():
-    assert "Zoom Teleconference" in parsed_item["description"]
-    assert "Location:" in parsed_item["description"]
+    assert "Civil Service Commission will meet" in parsed_item["description"]
 
 
 def test_classification():
-    assert parsed_item["classification"] == CITY_COUNCIL
+    assert parsed_item["classification"] == COMMISSION
 
 
 def test_start():
-    assert parsed_item["start"] == datetime(2025, 12, 17, 18, 0)
+    assert parsed_item["start"] == datetime(2025, 1, 15, 17, 0)
 
 
 def test_end():
@@ -87,10 +89,11 @@ def test_time_notes():
 
 
 def test_id():
-    assert (
-        parsed_item["id"]
-        == "colgo_white_salmon_city_council/202512171800/x/city_council_meeting"
+    expected = (
+        "colgo_white_salmon_civil_service/202501151700/x/"
+        "civil_service_commission_meeting"
     )
+    assert parsed_item["id"] == expected
 
 
 def test_status():
@@ -105,17 +108,16 @@ def test_location():
 
 
 def test_source():
-    assert (
-        parsed_item["source"]
-        == "https://www.whitesalmonwa.gov/citycouncil/page/city-council-meeting-152"
+    expected = (
+        "https://www.whitesalmonwa.gov/civilservice/page/"
+        "civil-service-commission-meeting-1"
     )
+    assert parsed_item["source"] == expected
 
 
 def test_links():
     links = parsed_item["links"]
-    # Check that we have agenda and packet links
     assert any(link["title"] == "Agenda" for link in links)
-    assert any(link["title"] == "Agenda Packet" for link in links)
 
 
 def test_all_day():

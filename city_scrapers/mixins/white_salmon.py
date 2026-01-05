@@ -47,18 +47,21 @@ class WhiteSalmonMixin(CityScrapersSpider):
     meeting_keyword = None
     classification = None
 
+    _required_vars = [
+        "agency",
+        "name",
+        "agency_id",
+        "meeting_keyword",
+        "classification",
+    ]
+
     def __init_subclass__(cls, **kwargs):
         """Enforces the implementation of required class variables in subclasses."""
         super().__init_subclass__(**kwargs)
 
-        required_vars = [
-            "agency",
-            "name",
-            "agency_id",
-            "meeting_keyword",
-            "classification",
+        missing_vars = [
+            var for var in cls._required_vars if not getattr(cls, var, None)
         ]
-        missing_vars = [var for var in required_vars if not getattr(cls, var, None)]
 
         if missing_vars:
             missing_vars_str = ", ".join(missing_vars)

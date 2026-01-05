@@ -7,4 +7,5 @@ class ColgoWhiteSalmonPlanningSpider(WhiteSalmonMixin):
     name = "colgo_white_salmon_planning"
     agency = "White Salmon Planning Commission"
     agency_id = "28"
+    meeting_keyword = "planning-commission"
     classification = COMMISSION

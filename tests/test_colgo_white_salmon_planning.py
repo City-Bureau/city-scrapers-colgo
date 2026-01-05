@@ -32,7 +32,7 @@ calendar_requests = list(spider.parse(calendar_response))
 
 def test_calendar_request_count():
     """Test that calendar parsing extracts meeting links."""
-    assert len(calendar_requests) >= 1
+    assert len(calendar_requests) == 1
 
 
 def test_calendar_request_url():

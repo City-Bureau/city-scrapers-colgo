@@ -31,8 +31,9 @@ calendar_requests = list(spider.parse(calendar_response))
 
 
 def test_calendar_request_count():
-    """Test that calendar parsing extracts meeting links."""
-    assert len(calendar_requests) >= 1
+    """Test that calendar parsing extracts filtered meeting links."""
+    # Fixture has 3 city-council-meeting links after filtering by meeting_keyword
+    assert len(calendar_requests) == 3
 
 
 def test_calendar_request_url():

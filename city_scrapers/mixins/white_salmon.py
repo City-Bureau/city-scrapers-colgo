@@ -11,12 +11,16 @@ Required class variables (enforced by metaclass):
     name (str): Spider name/slug (e.g., "colgo_white_salmon_city_council")
     agency (str): Full agency name (e.g., "City Council of White Salmon")
     agency_id (str): Agency filter ID from website (e.g., "27")
+    meeting_keyword (str): Keyword to filter meeting links (e.g., "city-council")
+    classification: Meeting classification constant (e.g., CITY_COUNCIL)
 
 Example:
     class ColgoWhiteSalmonCityCouncilSpider(WhiteSalmonMixin):
         name = "colgo_white_salmon_city_council"
         agency = "City Council of White Salmon"
         agency_id = "27"
+        meeting_keyword = "city-council"
+        classification = CITY_COUNCIL
 """
 
 import re
@@ -24,12 +28,6 @@ from datetime import datetime
 from typing import ClassVar
 
 import scrapy
-from city_scrapers_core.constants import (
-    CITY_COUNCIL,
-    COMMISSION,
-    COMMITTEE,
-    NOT_CLASSIFIED,
-)
 from city_scrapers_core.items import Meeting
 from city_scrapers_core.spiders import CityScrapersSpider
 from dateutil.relativedelta import relativedelta
@@ -42,7 +40,13 @@ class WhiteSalmonMixinMeta(type):
     """
 
     def __init__(cls, name, bases, dct):
-        required_static_vars = ["agency", "name", "agency_id"]
+        required_static_vars = [
+            "agency",
+            "name",
+            "agency_id",
+            "meeting_keyword",
+            "classification",
+        ]
         missing_vars = [var for var in required_static_vars if var not in dct]
 
         if missing_vars:
@@ -66,6 +70,8 @@ class WhiteSalmonMixin(CityScrapersSpider, metaclass=WhiteSalmonMixinMeta):
     name = None
     agency = None
     agency_id = None
+    meeting_keyword = None
+    classification = None
 
     # Configuration
     timezone = "America/Los_Angeles"
@@ -112,6 +118,9 @@ class WhiteSalmonMixin(CityScrapersSpider, metaclass=WhiteSalmonMixinMeta):
         ).getall()
 
         for link in meeting_links:
+            # Filter by meeting_keyword to only scrape relevant meetings
+            if self.meeting_keyword and self.meeting_keyword not in link:
+                continue
             full_url = response.urljoin(link)
             yield scrapy.Request(url=full_url, callback=self.parse_meeting)
 
@@ -135,7 +144,7 @@ class WhiteSalmonMixin(CityScrapersSpider, metaclass=WhiteSalmonMixinMeta):
         meeting = Meeting(
             title=title,
             description=self._parse_description(response),
-            classification=self._parse_classification(title),
+            classification=self.classification,
             start=start,
             end=None,
             all_day=False,
@@ -209,37 +218,13 @@ class WhiteSalmonMixin(CityScrapersSpider, metaclass=WhiteSalmonMixinMeta):
             address = re.sub(r"<[^>]+>", "", address).strip()
             return {"name": name, "address": address}
 
-        return self.default_location
+        return self.default_location.copy()
 
     def _parse_description(self, response):
         """Extract meeting description if available."""
         selector = response.css(".field-name-body .field-item.even")
         description = selector.xpath("string()").get()
         return description.strip() if description else ""
-
-    def _parse_classification(self, title):
-        """
-        Determine meeting classification based on title.
-
-        Args:
-            title (str): Meeting title
-
-        Returns:
-            str: Classification constant
-        """
-        if not title:
-            return NOT_CLASSIFIED
-
-        title_lower = title.lower()
-
-        if "council" in title_lower:
-            return CITY_COUNCIL
-        elif "commission" in title_lower:
-            return COMMISSION
-        elif "committee" in title_lower:
-            return COMMITTEE
-        else:
-            return NOT_CLASSIFIED
 
     def _parse_links(self, response):
         """
@@ -253,20 +238,17 @@ class WhiteSalmonMixin(CityScrapersSpider, metaclass=WhiteSalmonMixinMeta):
         """
         links = []
 
-        # Agenda link
-        agenda_href = response.css(".field-name-field-agenda-link a::attr(href)").get()
-        if agenda_href:
-            links.append({"href": agenda_href, "title": "Agenda"})
+        # Standard document links with their CSS selectors and titles
+        link_configs = [
+            (".field-name-field-agenda-link a::attr(href)", "Agenda"),
+            (".field-name-field-packets-link a::attr(href)", "Agenda Packet"),
+            (".field-name-field-video-link a::attr(href)", "Video"),
+        ]
 
-        # Packet link
-        packet_href = response.css(".field-name-field-packets-link a::attr(href)").get()
-        if packet_href:
-            links.append({"href": packet_href, "title": "Agenda Packet"})
-
-        # Video link
-        video_href = response.css(".field-name-field-video-link a::attr(href)").get()
-        if video_href:
-            links.append({"href": video_href, "title": "Video"})
+        for selector, title in link_configs:
+            href = response.css(selector).get()
+            if href:
+                links.append({"href": href, "title": title})
 
         # Supporting documents
         for doc in response.css(".other_attachments .filefield-file a"):

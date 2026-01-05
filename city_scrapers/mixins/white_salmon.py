@@ -60,7 +60,10 @@ class WhiteSalmonMixin(CityScrapersSpider):
         super().__init_subclass__(**kwargs)
 
         missing_vars = [
-            var for var in cls._required_vars if not getattr(cls, var, None)
+            var
+            for var in cls._required_vars
+            if (var != "meeting_keyword" and not getattr(cls, var, None))
+            or (var == "meeting_keyword" and getattr(cls, var, None) is None)
         ]
 
         if missing_vars:

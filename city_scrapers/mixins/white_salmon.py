@@ -199,22 +199,16 @@ class WhiteSalmonMixin(CityScrapersSpider, metaclass=WhiteSalmonMixinMeta):
         Returns:
             dict: Location with name and address keys
         """
-        # Look for location in the body content
-        body_text = response.css(".field-name-body .field-item").get() or ""
-
-        # Pattern: "Location: Name, Address"
-        location_match = re.search(
-            r"Location:\s*([^,]+),\s*(.+?)(?:</p>|<br|$)",
-            body_text,
-            re.IGNORECASE,
-        )
-
-        if location_match:
-            name = location_match.group(1).strip()
-            address = location_match.group(2).strip()
-            # Clean up any HTML tags
-            address = re.sub(r"<[^>]+>", "", address).strip()
-            return {"name": name, "address": address}
+        # Look for location in the body content using Scrapy selectors
+        for p in response.css(".field-name-body .field-item p"):
+            p_text = p.xpath("string()").get()
+            if p_text and "location:" in p_text.lower():
+                location_text = re.split(
+                    r"location:", p_text, maxsplit=1, flags=re.IGNORECASE
+                )[1].strip()
+                parts = [part.strip() for part in location_text.split(",", 1)]
+                if len(parts) == 2:
+                    return {"name": parts[0], "address": parts[1]}
 
         return self.default_location.copy()
 

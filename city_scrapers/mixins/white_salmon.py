@@ -211,9 +211,9 @@ class WhiteSalmonMixin(CityScrapersSpider):
             if match:
                 location_text = match.group(1).strip()
                 parts = [part.strip() for part in location_text.split(",", 1)]
-                if parts and parts[0]:
-                    name = parts[0]
-                    address = parts[1] if len(parts) > 1 else ""
+                name = parts[0]
+                address = parts[1] if len(parts) > 1 else ""
+                if name or address:
                     return {"name": name, "address": address}
 
         return self.default_location.copy()

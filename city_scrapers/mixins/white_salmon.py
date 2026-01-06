@@ -205,7 +205,9 @@ class WhiteSalmonMixin(CityScrapersSpider):
         # Look for location in the body content using Scrapy selectors
         for p in response.css(".field-name-body .field-item p"):
             p_text = p.xpath("string()").get()
-            match = re.search(r"location:(.*)", p_text or "", re.IGNORECASE | re.DOTALL)
+            match = re.search(
+                r"^\s*location:(.*)", p_text or "", re.IGNORECASE | re.DOTALL
+            )
             if match:
                 location_text = match.group(1).strip()
                 parts = [part.strip() for part in location_text.split(",", 1)]

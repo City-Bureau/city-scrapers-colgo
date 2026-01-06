@@ -44,7 +44,7 @@ def test_end():
 def test_time_notes():
     assert (
         parsed_items[0]["time_notes"]
-        == "Registration for the meeting is required. The link to register is located in the Agenda." # noqa
+        == "Registration for the meeting is required. The link to register is located in the Agenda."  # noqa
     )
 
 

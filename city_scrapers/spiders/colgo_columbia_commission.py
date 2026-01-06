@@ -16,7 +16,7 @@ class ColgoColumbiaCommissionSpider(CityScrapersSpider):
         "https://www.gorgecommission.org/meeting/archived",
     ]
 
-    time_notes = "Registration for the meeting is required. The link to register is located in the Agenda." # noqa
+    time_notes = "Registration for the meeting is required. The link to register is located in the Agenda."  # noqa
 
     location = {
         "name": "Zoom Webinar",

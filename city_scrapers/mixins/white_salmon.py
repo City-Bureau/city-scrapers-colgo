@@ -59,12 +59,16 @@ class WhiteSalmonMixin(CityScrapersSpider):
         """Enforces the implementation of required class variables in subclasses."""
         super().__init_subclass__(**kwargs)
 
-        missing_vars = [
-            var
-            for var in cls._required_vars
-            if (var != "meeting_keyword" and not getattr(cls, var, None))
-            or (var == "meeting_keyword" and getattr(cls, var, None) is None)
-        ]
+        missing_vars = []
+        for var in cls._required_vars:
+            value = getattr(cls, var, None)
+            # `meeting_keyword` can be an empty string, but not None.
+            if var == "meeting_keyword":
+                if value is None:
+                    missing_vars.append(var)
+            # Other required variables must be truthy.
+            elif not value:
+                missing_vars.append(var)
 
         if missing_vars:
             missing_vars_str = ", ".join(missing_vars)

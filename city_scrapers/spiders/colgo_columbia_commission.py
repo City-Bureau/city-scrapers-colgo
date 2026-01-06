@@ -59,23 +59,28 @@ class ColgoColumbiaCommissionSpider(CityScrapersSpider):
         return " ".join(title)
 
     def _parse_time(self, item, flag):
-        date_text = (
-            item.css("li i.icon-calendar").xpath("following-sibling::text()").get()
-        )
-        time_text = item.css("li i.icon-time").xpath("following-sibling::text()").get()
+        try:
+            date_text = (
+                item.css("li i.icon-calendar").xpath("following-sibling::text()").get()
+            )
+            time_text = (
+                item.css("li i.icon-time").xpath("following-sibling::text()").get()
+            )
 
-        start_time = time_text.split("-")[0].strip()
-        end_time = time_text.split("-")[1].strip()
+            start_time = time_text.split("-")[0].strip()
+            end_time = time_text.split("-")[1].strip()
 
-        date_str = re.search(r"^(.*\d{4})", date_text.strip()).group(1)
+            date_str = re.search(r"^(.*\d{4})", date_text.strip()).group(1)
 
-        start_dt = datetime.datetime.strptime(
-            f"{date_str} {start_time}", "%b %d, %Y %I:%M %p"
-        )
-        end_dt = datetime.datetime.strptime(
-            f"{date_str} {end_time}", "%b %d, %Y %I:%M %p"
-        )
-        return start_dt if flag == "start" else end_dt
+            start_dt = datetime.datetime.strptime(
+                f"{date_str} {start_time}", "%b %d, %Y %I:%M %p"
+            )
+            end_dt = datetime.datetime.strptime(
+                f"{date_str} {end_time}", "%b %d, %Y %I:%M %p"
+            )
+            return start_dt if flag == "start" else end_dt
+        except Exception:
+            return None
 
     def _parse_links(self, item):
         links = item.css("a")[1:]
@@ -84,6 +89,7 @@ class ColgoColumbiaCommissionSpider(CityScrapersSpider):
             for link in links:
                 href = link.attrib.get("href")
                 title = link.css("::text").get().strip()
-                link_list.append({"href": f"{self.base_url}{href}", "title": title})
+                if title and href:
+                    link_list.append({"href": f"{self.base_url}{href}", "title": title})
             return link_list
         return []

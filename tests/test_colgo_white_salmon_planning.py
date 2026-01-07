@@ -69,7 +69,8 @@ def test_title(parsed_item):
 
 
 def test_description(parsed_item):
-    assert "Planning Commission will meet" in parsed_item["description"]
+    # Planning has no default description
+    assert parsed_item["description"] == ""
 
 
 def test_classification(parsed_item):

@@ -70,9 +70,9 @@ def test_title(parsed_item):
 
 
 def test_description(parsed_item):
-    # Description should only contain text after <hr> tag (not Zoom info)
-    assert "NOTICE OF PUBLIC HEARING" in parsed_item["description"]
-    assert "ORDINANCE 2025-02-1174" in parsed_item["description"]
+    # Uses default description from About page
+    assert "City Council of White Salmon" in parsed_item["description"]
+    assert "part-time City Attorney" in parsed_item["description"]
 
 
 def test_classification(parsed_item):

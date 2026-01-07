@@ -96,6 +96,9 @@ class WhiteSalmonMixin(CityScrapersSpider):
         "address": "119 NE Church Ave, White Salmon, WA 98672",
     }
 
+    # Default description - can be overridden by subclasses
+    default_description = ""
+
     # Number of years to scrape into the past
     years_back = 3
     # Number of months to scrape into the future
@@ -164,7 +167,7 @@ class WhiteSalmonMixin(CityScrapersSpider):
 
         meeting = Meeting(
             title=title,
-            description=self._parse_description(response),
+            description=self.default_description,
             classification=self.classification,
             start=start,
             end=None,
@@ -223,31 +226,6 @@ class WhiteSalmonMixin(CityScrapersSpider):
             dict: Location with name and address keys
         """
         return self.default_location.copy()
-
-    def _parse_description(self, response):
-        """
-        Extract meeting description if available.
-
-        If an <hr> tag exists, returns only the text after it (which contains
-        the actual meeting description without redundant Zoom info that's
-        already included in agenda files). Otherwise, returns the full
-        description text.
-        """
-        selector = response.css(".field-name-body .field-item")
-
-        # Check if there's an <hr> tag - if so, only return text after it
-        hr_following = selector.css("hr ~ *")
-        if hr_following:
-            description_parts = []
-            for element in hr_following:
-                text = element.xpath("string()").get()
-                if text:
-                    description_parts.append(text.strip())
-            return " ".join(description_parts).strip()
-
-        # No <hr> tag - return full description
-        description = selector.xpath("string()").get()
-        return description.strip() if description else ""
 
     def _parse_links(self, response):
         """

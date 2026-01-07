@@ -23,7 +23,6 @@ Example:
         classification = CITY_COUNCIL
 """
 
-import re
 from datetime import datetime
 from typing import ClassVar
 
@@ -84,10 +83,17 @@ class WhiteSalmonMixin(CityScrapersSpider):
         "?field_microsite_tid=All&field_microsite_tid_1={agency_id}"
     )
 
-    # Default location fallback
+    # Rate limiting settings to avoid 429 errors
+    custom_settings = {
+        "DOWNLOAD_DELAY": 2,  # 2 seconds between requests
+        "RANDOMIZE_DOWNLOAD_DELAY": True,  # Randomize delay between 0.5x and 1.5x
+        "CONCURRENT_REQUESTS_PER_DOMAIN": 1,  # Only 1 concurrent request per domain
+    }
+
+    # Default location - consistent across all White Salmon meetings
     default_location: ClassVar[dict[str, str]] = {
-        "name": "",
-        "address": "",
+        "name": "City's Council Chambers",
+        "address": "119 NE Church Ave, White Salmon, WA 98672",
     }
 
     # Number of years to scrape into the past
@@ -207,27 +213,15 @@ class WhiteSalmonMixin(CityScrapersSpider):
 
     def _parse_location(self, response):
         """
-        Parse location from meeting detail page.
+        Return the default location for White Salmon meetings.
 
-        Looks for "Location:" pattern in the page content.
+        All White Salmon government meetings are held at the same location
+        (City's Council Chambers), so we use a consistent default rather
+        than parsing potentially inconsistent text from the page.
 
         Returns:
             dict: Location with name and address keys
         """
-        # Look for location in the body content using Scrapy selectors
-        for p in response.css(".field-name-body .field-item p"):
-            p_text = p.xpath("string()").get()
-            match = re.search(
-                r"^\s*location:(.*)", p_text or "", re.IGNORECASE | re.DOTALL
-            )
-            if match:
-                location_text = match.group(1).strip()
-                parts = [part.strip() for part in location_text.split(",", 1)]
-                name = parts[0]
-                address = parts[1] if len(parts) > 1 else ""
-                if name or address:
-                    return {"name": name, "address": address}
-
         return self.default_location.copy()
 
     def _parse_description(self, response):

@@ -20,7 +20,7 @@ spider_configs = [
         "board_name": "City Council",
         "board_id": 27,
         "location": default_location,
-        "description": "With the exception of executive session meetings, Council meetings are open to the public, with opportunity for the public to speak. For all comments and testimony, speakers are asked to limit statements to about three minutes in order to allow as many people as possible the chance to address Council.", # noqa
+        "description": "With the exception of executive session meetings, Council meetings are open to the public, with opportunity for the public to speak. For all comments and testimony, speakers are asked to limit statements to about three minutes in order to allow as many people as possible the chance to address Council.",  # noqa
     },
     {
         "class_name": "ColgoStevensonPlanningSpider",
@@ -29,7 +29,7 @@ spider_configs = [
         "board_name": "Planning Commission",
         "board_id": 28,
         "location": default_location,
-        "description": "Commission meetings are open to the public, with opportunity for the public to speak. For all comments and testimony, speakers are asked to limit statements to about three minutes in order to allow as many people as possible the chance to address Commission.", # noqa
+        "description": "Commission meetings are open to the public, with opportunity for the public to speak. For all comments and testimony, speakers are asked to limit statements to about three minutes in order to allow as many people as possible the chance to address Commission.",  # noqa
     },
 ]
 

@@ -3,7 +3,13 @@ from datetime import datetime, timedelta
 from urllib.parse import urlencode
 
 import scrapy
-from city_scrapers_core.constants import CITY_COUNCIL, COMMISSION, NOT_CLASSIFIED
+from city_scrapers_core.constants import (
+    CANCELLED,
+    CITY_COUNCIL,
+    COMMISSION,
+    NOT_CLASSIFIED,
+    PASSED
+)
 from city_scrapers_core.items import Meeting
 from city_scrapers_core.spiders import CityScrapersSpider
 
@@ -76,11 +82,7 @@ class ColgoStevensonCitySpiderMixin(
 
         url = f"{self.base_url}/?{urlencode(params)}"
 
-        yield self.make_request(url)
-
-    def make_request(self, url):
-        """Override this in child class if custom request logic needed."""
-        return scrapy.Request(url, callback=self.parse)
+        yield scrapy.Request(url, callback=self.parse)
 
     def parse(self, response):
         meetings = response.css("tr.even, tr.odd")
@@ -116,11 +118,9 @@ class ColgoStevensonCitySpiderMixin(
         Remove leading date information from the title.
         Preserve the original title text exactly otherwise.
         """
-        # The title is in the td.views-field-title element as direct text
         title = item.css("td.views-field-title::text, .views-field-title::text").get()
 
-        # Strip whitespace
-        title = title.strip()
+        title = title.strip() if title else ""
 
         # Remove date patterns from the beginning of the title
         date_patterns = [
@@ -246,6 +246,22 @@ class ColgoStevensonCitySpiderMixin(
                 links.append({"href": response.urljoin(href), "title": header})
 
         return links
+
+    def _get_status(self, meeting, text=""):
+        combined_text = f"{meeting.get('title', '')} {text}".lower()
+
+        if "cancelled" in combined_text:
+            return CANCELLED
+
+        # Rescheduled ≠ cancelled on this site
+        if (
+            "rescheduled" in combined_text
+            and meeting["start"]
+            and meeting["start"] < datetime.now()
+        ):
+            return PASSED
+
+        return super()._get_status(meeting, text)
 
     def _parse_source(self, response):
         """Parse or generate source."""

@@ -10,6 +10,7 @@ Required class variables (enforced by metaclass):
 
 import re
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import scrapy
 from city_scrapers_core.constants import (
@@ -162,9 +163,9 @@ class ColgoHoodRiverCityMixin(
                         # Handle both string and int timestamps
                         if isinstance(date_timestamp, str):
                             date_timestamp = int(date_timestamp)
-                        date_key = datetime.fromtimestamp(date_timestamp).strftime(
-                            "%Y-%m-%d"
-                        )
+                            tz = ZoneInfo(self.timezone)  # Use the spider's timezone
+                            date_key = datetime.fromtimestamp(date_timestamp, tz=tz).strftime("%Y-%m-%d")
+
                         title = session.get("title", "").lower()
 
                         # Store video URL with metadata

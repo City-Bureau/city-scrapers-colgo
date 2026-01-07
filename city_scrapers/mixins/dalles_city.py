@@ -1,53 +1,75 @@
 """
-Mixin for scraping agencies using OmpNetwork platform.
+Mixin for scraping The Dalles, Oregon city government meetings.
 
-OmpNetwork (https://ompnetwork.org/) provides a hosted video streaming and
-meeting management platform used by various municipalities. This mixin handles
-the common API patterns used across OmpNetwork-powered sites.
+The Dalles uses the OmpNetwork platform (https://ompnetwork.org/) for hosting
+video streaming and meeting management. This mixin handles the common API
+patterns used across all Dalles government agencies.
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 import scrapy
 from city_scrapers_core.constants import NOT_CLASSIFIED
 from city_scrapers_core.items import Meeting
+from city_scrapers_core.spiders import CityScrapersSpider
 
 
-class OmpNetworkMixin:
+class DallesCityMixinMeta(type):
     """
-    Mixin for scraping meeting data from OmpNetwork API endpoints.
-
-    This mixin provides common functionality for parsing meeting data from
-    OmpNetwork's JSON API. It should be used in conjunction with CityScrapersSpider.
-
-    Required spider attributes:
-        - site_id: The OmpNetwork site identifier (e.g., "312" for The Dalles)
-        - category_id: The category ID for the specific agency/committee
-        - agency: The agency name
-
-    Optional spider attributes (with defaults):
-        - timezone: Defaults to "America/Los_Angeles"
-        - location: Defaults to The Dalles City Hall
+    Metaclass that enforces the implementation of required static
+    variables in child classes that inherit from DallesCityMixin.
     """
 
-    # Default location for The Dalles meetings
-    # Can be overridden in individual spiders if needed
-    location = {
-        "name": "The Dalles City Hall",
-        "address": "313 Court St, The Dalles, OR 97058",
+    def __init__(cls, name, bases, dct):
+        required_static_vars = ["agency", "name", "category_id", "location"]
+        missing_vars = [var for var in required_static_vars if var not in dct]
+
+        if missing_vars:
+            missing_vars_str = ", ".join(missing_vars)
+            raise NotImplementedError(
+                f"{name} must define the following static variable(s): "
+                f"{missing_vars_str}."
+            )
+
+        super().__init__(name, bases, dct)
+
+
+class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
+    """
+    This class is designed to be used as a mixin for The Dalles city website.
+    Agencies are identified by a category ID on the OmpNetwork platform.
+
+    To use this mixin, create a child spider class that inherits from DallesCityMixin
+    and define the required static variables: agency, name, category_id, and location.
+    """
+
+    custom_settings = {
+        "ROBOTSTXT_OBEY": False,
     }
 
-    # Default timezone for The Dalles
+    name = None
+    agency = None
+    category_id = None
+    location = None
+    time_notes = None
+
+    # The Dalles OmpNetwork site ID (constant for all Dalles agencies)
+    site_id = "312"
+
     timezone = "America/Los_Angeles"
+    base_url = "https://thedalles-oregon.ompnetwork.org"
 
     # API has a maximum limit of ~150 items per request, use 100 to be safe
     page_size = 100
 
-    @property
-    def start_urls(self):
-        """Return start URLs for the spider."""
-        return [self.api_url]
+    def start_requests(self):
+        """
+        This spider mixin fetches meeting data from The Dalles OmpNetwork API
+        using a category ID which is specified in each child spider class.
+        """
+        api_url = self._build_api_url(start=0, limit=self.page_size)
+        yield scrapy.Request(url=api_url, callback=self.parse)
 
     def _build_api_url(self, start=0, limit=100):
         """
@@ -120,7 +142,23 @@ class OmpNetworkMixin:
 
     def _parse_title(self, item):
         """Parse or generate meeting title."""
-        return item.get("title", "").strip() or self.agency
+        title = item.get("title", "").strip()
+        if not title:
+            return self.agency
+        # Clean up title by removing streaming-related suffixes
+        # Use built-in _clean_title to remove common irrelevant information
+        title = self._clean_title(title)
+        # Remove OmpNetwork-specific suffixes
+        for suffix in [
+            " - Live Stream",
+            "- Live Stream",
+            " | Live Stream",
+            "| Live Stream",
+        ]:
+            if title.endswith(suffix):
+                title = title[: -len(suffix)].strip()
+                break
+        return title
 
     def _parse_description(self, item):
         """Parse meeting description."""
@@ -131,10 +169,25 @@ class OmpNetworkMixin:
         return NOT_CLASSIFIED
 
     def _parse_start(self, item):
-        """Parse start datetime from Unix timestamp."""
+        """
+        Parse start datetime from Unix timestamp.
+
+        The OmpNetwork API returns Unix timestamps that represent Pacific time
+        directly (stored as if they were UTC). We interpret the timestamp as
+        Pacific time and return a naive datetime object (for compatibility with
+        city-scrapers-core's _get_status method which uses naive datetime.now()).
+
+        Example: A meeting at 5:30 PM PST (timestamp: 1768239000) is stored as
+        1768239000 which when decoded as UTC gives 2026-01-12 17:30:00. This
+        UTC interpretation is actually the correct Pacific time.
+        """
         timestamp = item.get("date")
         if timestamp:
-            return datetime.fromtimestamp(int(timestamp))
+            # The API stores Pacific time as Unix timestamp
+            # Use timezone-aware conversion then strip timezone for naive datetime
+            return datetime.fromtimestamp(int(timestamp), tz=timezone.utc).replace(
+                tzinfo=None
+            )
         return None
 
     def _parse_end(self, item):
@@ -143,7 +196,7 @@ class OmpNetworkMixin:
 
     def _parse_time_notes(self, item):
         """Parse any notes about the meeting time."""
-        return ""
+        return self.time_notes or ""
 
     def _parse_all_day(self, item):
         """Parse or generate all-day status."""

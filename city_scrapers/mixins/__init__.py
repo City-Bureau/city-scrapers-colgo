@@ -1,3 +1,3 @@
-from .ompnetwork import OmpNetworkMixin  # noqa
+from .dalles_city import DallesCityMixin  # noqa
 
-__all__ = ["OmpNetworkMixin"]
+__all__ = ["DallesCityMixin"]

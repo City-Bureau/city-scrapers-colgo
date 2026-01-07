@@ -1,7 +1,7 @@
 from datetime import datetime
 from os.path import dirname, join
 
-from city_scrapers_core.constants import CANCELLED, COMMITTEE, PASSED, TENTATIVE
+from city_scrapers_core.constants import CITY_COUNCIL, COMMITTEE, CANCELLED, PASSED, TENTATIVE
 from city_scrapers_core.utils import file_response
 from freezegun import freeze_time
 from parsel import Selector
@@ -221,8 +221,7 @@ def test_status_tentative():
 def test_classification():
     """Test that classification is correctly assigned"""
     assert budget_items[0]["classification"] == COMMITTEE
-    # City Council meetings get "City Council" classification
-    assert council_items[0]["classification"] == "City Council"
+    assert council_items[0]["classification"] == CITY_COUNCIL
 
 
 def test_source():

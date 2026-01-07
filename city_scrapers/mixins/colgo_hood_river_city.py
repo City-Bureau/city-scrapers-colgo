@@ -98,10 +98,8 @@ class ColgoHoodRiverCityMixin(
 
     def _parse_videos_first_page(self, response):
         """Parse first page of videos and fetch remaining pages."""
-        import json
-
         try:
-            data = json.loads(response.text)
+            data = response.json()
             total_size = int(data.get("totalSize", 0))
             limit = 100
 
@@ -137,10 +135,8 @@ class ColgoHoodRiverCityMixin(
 
     def _parse_videos_additional_page(self, response):
         """Parse additional pages of videos."""
-        import json
-
         try:
-            data = json.loads(response.text)
+            data = response.json()
             total_size = response.meta.get("total_size", 0)
 
             self.all_video_sessions.extend(data.get("results", []))
@@ -263,11 +259,9 @@ class ColgoHoodRiverCityMixin(
         """
         Parse the EventON API JSON response.
         """
-        import json
-
         try:
-            data = json.loads(response.text)
-        except json.JSONDecodeError:
+            data = response.json()
+        except ValueError:
             self.logger.error(
                 f"Failed to parse JSON response. "
                 f"Status: {response.status}, Body: {response.text[:200]}"
@@ -343,128 +337,10 @@ class ColgoHoodRiverCityMixin(
 
             # Add video link
             meeting["links"] = self._add_video_link(meeting, meeting["links"])
-
             meeting["status"] = self._get_status(meeting, event)
             meeting["id"] = self._get_id(meeting)
-
-            skip_validation = bool(
-                getattr(response, "meta", {}).get("skip_link_validation")
-            )
-            if skip_validation:
-                yield meeting
-                continue
-
-            # No links → yield immediately
-            if not meeting.get("links"):
-                yield meeting
-                continue
-
-            # Prepare async validation state
-            request_meta = {
-                "meeting": meeting,
-                "links_to_validate": meeting["links"][:],  # Copy of links to validate
-                "validated_links": [],
-                "handle_httpstatus_all": True,
-            }
-
-            # Start validation with the first link
-            if meeting["links"]:
-                link = meeting["links"][0]
-                yield scrapy.Request(
-                    url=link["href"],
-                    method="HEAD",
-                    callback=self._on_link_check,
-                    errback=self._on_link_check_error,
-                    dont_filter=True,
-                    meta=request_meta,
-                    priority=-10,
-                )
-
-    def _on_link_check(self, response):
-        meta = response.meta
-        meeting = meta["meeting"]
-        current_link = meta["current_link"] = meta["links_to_validate"].pop(0)
-
-        # Accept 2xx/3xx as valid
-        if response.status < 400:
-            meta["validated_links"].append(current_link)
-        else:
-            self.logger.warning(
-                f"Broken link ({response.status}) in {meeting.get('title', 'meeting')}: "  # noqa
-                f"{current_link.get('title', '')} {current_link.get('href')}"
-            )
-
-        # Process next link or finish
-        result = self._process_next_link(meta, response.request)
-        if result is not None:
-            yield result
-
-    def _process_next_link(self, meta, request):
-        """Process the next link in the validation queue or yield the final meeting."""
-        if meta["links_to_validate"]:
-            # Process next link
-            next_link = meta["links_to_validate"][0]
-            return scrapy.Request(
-                url=next_link["href"],
-                method="HEAD",
-                callback=self._on_link_check,
-                errback=self._on_link_check_error,
-                dont_filter=True,
-                meta=meta,
-                priority=-10,
-            )
-        else:
-            # All links processed, yield the meeting with validated links
-            meeting = meta["meeting"].copy()
-            meeting["links"] = meta["validated_links"]
-            return meeting
-
-    def _on_link_check_error(self, failure):
-        request = failure.request
-        meta = request.meta
-        meeting = meta["meeting"]
-        current_link = meta["current_link"]
-
-        # Optional fallback: some servers block HEAD; retry with GET
-        if request.method == "HEAD":
-            req = scrapy.Request(
-                url=current_link["href"],
-                method="GET",
-                callback=self._on_link_check,
-                errback=self._on_link_check_error_final,
-                dont_filter=True,
-                meta=meta | {"handle_httpstatus_all": True},
-                priority=-10,
-            )
-            yield req
-            return
-
-        # If GET also failed, log and continue with next link
-        self.logger.warning(
-            f"Error validating link in {meeting.get('title', 'meeting')}: "
-            f"{current_link.get('href')} ({failure.getErrorMessage()})"
-        )
-        # Process next link or finish
-        result = self._process_next_link(meta, request)
-        if result is not None:
-            yield result
-
-    def _on_link_check_error_final(self, failure):
-        # final failure after GET fallback
-        request = failure.request
-        meta = request.meta
-        meeting = meta["meeting"]
-        current_link = meta["current_link"]
-
-        self.logger.warning(
-            f"Error validating link in {meeting.get('title', 'meeting')}: "
-            f"{current_link.get('href')} ({failure.getErrorMessage()})"
-        )
-
-        # Process next link or finish
-        result = self._process_next_link(meta, request)
-        if result is not None:
-            yield result
+            # Yield the meeting with all links included (no validation)
+            yield meeting
 
     def _parse_title(self, item):
         """Parse or generate meeting title."""
@@ -478,6 +354,7 @@ class ColgoHoodRiverCityMixin(
             "span.evcal_desc2::text",
             "a::text",
         ]
+        
         for selector in title_selectors:
             title = item.css(selector).get()
             if title:

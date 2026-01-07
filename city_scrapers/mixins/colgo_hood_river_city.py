@@ -163,10 +163,10 @@ class ColgoHoodRiverCityMixin(
                         # Handle both string and int timestamps
                         if isinstance(date_timestamp, str):
                             date_timestamp = int(date_timestamp)
-                            tz = ZoneInfo(self.timezone)  # Use the spider's timezone
-                            date_key = datetime.fromtimestamp(
-                                date_timestamp, tz=tz
-                            ).strftime("%Y-%m-%d")
+                        tz = ZoneInfo(self.timezone)  # Use the spider's timezone
+                        date_key = datetime.fromtimestamp(
+                            date_timestamp, tz=tz
+                        ).strftime("%Y-%m-%d")
 
                         title = session.get("title", "").lower()
 

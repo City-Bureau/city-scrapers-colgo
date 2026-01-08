@@ -409,16 +409,6 @@ class ColgoHoodRiverCityMixin(
 
     def _parse_description(self, item):
         """Parse or generate meeting description."""
-        desc_selectors = [
-            ".evcal_event_subtitle::text",
-            ".evo_event_desc::text",
-            "[itemprop='description']::text",
-            ".event_description::text",
-        ]
-        for selector in desc_selectors:
-            desc = item.css(selector).get()
-            if desc:
-                return desc.strip()
         return ""
 
     def _parse_classification(self, title):
@@ -475,8 +465,31 @@ class ColgoHoodRiverCityMixin(
         return None
 
     def _parse_time_notes(self, item):
-        """Parse any additional notes on the timing of the meeting"""
-        return ""
+        """Capture useful cancellation notes (if present) into time_notes."""
+        # Only add time_notes if the event is actually cancelled/canceled
+        event_html = (item.get() or "").lower()
+        if "cancelled" not in event_html and "canceled" not in event_html:
+            return ""
+
+        # Try subtitle first
+        subtitle = item.css(
+            ".evcal_event_subtitle::text, .evo_event_subtitle::text"
+        ).get()
+        subtitle = (subtitle or "").strip()
+        if subtitle and (
+            "cancelled" in subtitle.lower() or "canceled" in subtitle.lower()
+        ):
+            return subtitle
+
+        # Then try the description-like fields
+        desc = item.css(
+            ".evo_event_desc::text, .evcal_desc::text, [itemprop='description']::text, .event_description::text"  # noqa
+        ).get()
+        desc = (desc or "").strip()
+        if desc and ("cancelled" in desc.lower() or "canceled" in desc.lower()):
+            return desc
+
+        return "Meeting has been cancelled"
 
     def _parse_all_day(self, item):
         """Parse or generate all-day status. Defaults to False."""

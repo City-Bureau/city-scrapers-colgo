@@ -2,7 +2,7 @@ from datetime import datetime
 from os.path import dirname, join
 
 import pytest
-from city_scrapers_core.constants import CITY_COUNCIL, COMMISSION, NOT_CLASSIFIED
+from city_scrapers_core.constants import CITY_COUNCIL
 from city_scrapers_core.utils import file_response
 from freezegun import freeze_time
 
@@ -29,6 +29,61 @@ def test_count():
     assert len(parsed_items) > 0
 
 
+def test_first_item_exact_values():
+    """Test first meeting has expected values from fixture"""
+    item = parsed_items[0]
+
+    # Values from colgo_stevenson_city.html fixture
+    # Title cleaned by spider (removes "December 18th, 2025")
+    assert item["title"] == "Regular Council Meeting"
+    assert item["start"] == datetime(2025, 12, 18, 18, 0)
+    assert item["classification"] == CITY_COUNCIL
+    assert item["location"] == {
+        "name": "Stevenson City Hall Council Chambers",
+        "address": "7121 East Loop Road, Stevenson, WA 98648",
+    }
+    assert (
+        item["source"]
+        == "https://www.ci.stevenson.wa.us/meetings?field_microsite_tid_1=27"
+    )
+    assert item["end"] is None
+    assert item["all_day"] is False
+    # Future meeting from perspective of frozen time (2024-12-18)
+    assert item["status"] == "tentative"
+
+
+def test_second_meeting_with_links():
+    """Test second meeting which has complete documentation"""
+    item = parsed_items[1]
+
+    # Title cleaned by spider
+    assert item["title"] == "Joint Council/Fire District 2 Meeting"
+    assert item["start"] == datetime(2025, 12, 1, 17, 30)
+
+    # This meeting has all link types
+    link_titles = [link["title"] for link in item["links"]]
+    assert "Agenda" in link_titles
+    assert "Agenda Packet" in link_titles
+    assert "Minutes" in link_titles
+    assert "Video" in link_titles
+
+    # Verify link structure
+    for link in item["links"]:
+        assert link["href"].startswith("http")
+        assert "ci.stevenson.wa.us" in link["href"]
+
+
+def test_all_titles_cleaned():
+    """Test that date patterns are removed from all titles"""
+    for item in parsed_items:
+        # Titles should not start with dates after cleaning
+        assert not item["title"][0].isdigit()
+        # No leading/trailing whitespace
+        assert item["title"].strip() == item["title"]
+        # Should have meaningful content
+        assert len(item["title"]) > 0
+
+
 def test_title():
     """Test meeting title"""
     assert parsed_items[0]["title"] is not None
@@ -36,12 +91,22 @@ def test_title():
 
 
 def test_description():
-    """Test meeting description"""
-    assert isinstance(parsed_items[0]["description"], str)
+    """Test meeting description matches spider config"""
+    expected_desc = (
+        "With the exception of executive session meetings, Council meetings are open "
+        "to the public, with opportunity for the public to speak. For all comments "
+        "and testimony, speakers are asked to limit statements to about three minutes "
+        "in order to allow as many people as possible the chance to address Council."
+    )
+    for item in parsed_items:
+        assert isinstance(item["description"], str)
+        assert item["description"] == expected_desc
 
 
-def test_classification_is_city_council():
-    assert parsed_items[0]["classification"] == CITY_COUNCIL
+def test_classification():
+    """Test all meetings are City Council classification"""
+    for item in parsed_items:
+        assert item["classification"] == CITY_COUNCIL
 
 
 def test_start():
@@ -66,44 +131,71 @@ def test_id():
     assert isinstance(parsed_items[0]["id"], str)
 
 
-def test_status():
-    """Test meeting status"""
-    assert parsed_items[0]["status"] in ["passed", "tentative", "cancelled", "upcoming"]
+def test_status_values():
+    """Test meeting status values are valid"""
+    valid_statuses = ["passed", "tentative", "cancelled"]
+    for item in parsed_items:
+        assert item["status"] in valid_statuses
+
+
+def test_cancelled_meeting():
+    """Test that cancelled meetings are properly identified"""
+    # Last meeting in fixture is cancelled
+    cancelled_meetings = [
+        item for item in parsed_items if "cancelled" in item["title"].lower()
+    ]
+
+    assert len(cancelled_meetings) == 1
+    cancelled = cancelled_meetings[0]
+
+    assert "Q2 Joint City Council/Fire District II Meeting" in cancelled["title"]
+    assert cancelled["status"] == "cancelled"
+    assert cancelled["start"] == datetime(2025, 6, 11, 17, 30)
+
+
+def test_rescheduled_status():
+    """Test that meetings with 'Rescheduled' in title get correct status"""
+    rescheduled_meetings = [
+        item for item in parsed_items if "rescheduled" in item["title"].lower()
+    ]
+
+    for item in rescheduled_meetings:
+        # If meeting date is in the past (before frozen time 2024-12-18)
+        if item["start"] < datetime(2024, 12, 18):
+            assert item["status"] == "passed"
 
 
 def test_location():
-    """Test meeting location"""
-    assert parsed_items[0]["location"]["name"] == "Stevenson City Hall Council Chambers"
-    assert (
-        parsed_items[0]["location"]["address"]
-        == "7121 East Loop Road, Stevenson, WA 98648"
-    )
+    """Test meeting location is consistent"""
+    expected_location = {
+        "name": "Stevenson City Hall Council Chambers",
+        "address": "7121 East Loop Road, Stevenson, WA 98648",
+    }
+    for item in parsed_items:
+        assert item["location"] == expected_location
 
 
 def test_source():
     """Test meeting source URL"""
-    assert (
-        parsed_items[0]["source"]
-        == "https://www.ci.stevenson.wa.us/meetings?field_microsite_tid_1=27"
-    )
+    expected_source = "https://www.ci.stevenson.wa.us/meetings?field_microsite_tid_1=27"
+    for item in parsed_items:
+        assert item["source"] == expected_source
 
 
-def test_links():
-    """Test meeting links"""
-    links = parsed_items[0]["links"]
-    assert isinstance(links, list)
+def test_links_structure():
+    """Test meeting links have valid structure and titles"""
+    valid_link_titles = ["Agenda", "Agenda Packet", "Minutes", "Video"]
 
-    for link in links:
-        assert "href" in link
-        assert "title" in link
+    for item in parsed_items:
+        links = item["links"]
+        assert isinstance(links, list)
 
-
-def test_classification():
-    """Test meeting classification"""
-    classification = parsed_items[0]["classification"]
-    assert classification is not None
-    # Should be one of the valid constants
-    assert classification in [CITY_COUNCIL, COMMISSION, NOT_CLASSIFIED]
+        for link in links:
+            assert "href" in link
+            assert "title" in link
+            assert link["title"] in valid_link_titles
+            # All links should be absolute URLs
+            assert link["href"].startswith("http")
 
 
 @pytest.mark.parametrize("item", parsed_items)

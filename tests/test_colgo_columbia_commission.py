@@ -44,7 +44,7 @@ def test_end():
 def test_time_notes():
     assert (
         parsed_items[0]["time_notes"]
-        == "Registration for the meeting is required. The link to register is located in the Agenda."  # noqa
+        == "For meeting time and registration details, please check the Agenda."  # noqa
     )
 
 
@@ -61,7 +61,7 @@ def test_status():
 
 def test_location():
     assert parsed_items[0]["location"] == {
-        "name": "Zoom Webinar",
+        "name": "via Zoom webinar",
         "address": "White Salmon, WA",
     }
 

@@ -16,12 +16,9 @@ class ColgoColumbiaCommissionSpider(CityScrapersSpider):
         "https://www.gorgecommission.org/meeting/archived",
     ]
 
-    time_notes = "Registration for the meeting is required. The link to register is located in the Agenda."  # noqa
-
-    location = {
-        "name": "Zoom Webinar",
-        "address": "White Salmon, WA",
-    }
+    time_notes = (
+        "For meeting time and registration details, please check the Agenda."  # noqa
+    )
 
     def parse(self, response):
         meetings = response.css("div.entry.clearfix > div.entry-c")
@@ -33,8 +30,8 @@ class ColgoColumbiaCommissionSpider(CityScrapersSpider):
                 start=self._parse_time(item, "start"),
                 end=self._parse_time(item, "end"),
                 all_day=False,
-                time_notes=self.time_notes,
-                location=self.location,
+                time_notes=self._parse_time_notes(item),
+                location=self._parse_location(item),
                 links=self._parse_links(item),
                 source=response.url,
             )
@@ -43,6 +40,27 @@ class ColgoColumbiaCommissionSpider(CityScrapersSpider):
             meeting["id"] = self._get_id(meeting)
 
             yield meeting
+
+    def _parse_time_notes(self, item):
+        meeting_start = self._parse_time(item, "start")
+        return (
+            self.time_notes
+            if meeting_start and meeting_start > datetime.datetime.now()
+            else ""
+        )
+
+    def _parse_location(self, item):
+        location_text = (
+            item.css("li i.icon-map-marker2").xpath("following-sibling::text()").get()
+        )
+
+        parts = location_text.split(" at ", 1)
+
+        location = {
+            "name": parts[1].strip(),
+            "address": parts[0].strip(),
+        }
+        return location
 
     def _get_status(self, item, meeting, text=""):
         title_div = item.css(".entry-title a::text").get()

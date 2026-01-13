@@ -41,9 +41,13 @@ def test_end():
 
 
 def test_time_notes():
-    assert (
-        parsed_items[0]["time_notes"]
-        == "Please check the agenda for meeting time details"
+    assert parsed_items[0]["time_notes"] == (
+        "The public is invited to attend the Skamania County Board of "
+        "Commissioners (BOCC) meetings in person or remotely via Zoom. "
+        "The Board holds its regular business meeting every Tuesday "
+        "beginning at 9:30 a.m. in the boardroom on the lower level "
+        "of the Skamania County Courthouse. Please refer to the meeting "
+        "agenda for the meeting start time."
     )
 
 

@@ -1,5 +1,5 @@
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import scrapy
 from city_scrapers_core.constants import BOARD
@@ -15,7 +15,7 @@ class SkamaniaCountyMixinMeta(type):
     """
 
     def __init__(cls, name, bases, dct):
-        required_static_vars = ["agency", "name", "agenda_param"]
+        required_static_vars = ["agency", "name", "agenda_param", "time_notes"]
         missing_vars = [var for var in required_static_vars if var not in dct]
 
         if missing_vars:
@@ -32,6 +32,7 @@ class SkamaniaCountyMixin(CityScrapersSpider, metaclass=SkamaniaCountyMixinMeta)
     name = None
     agency = None
     agenda_param = None
+    time_notes = ""
 
     timezone = "America/Los_Angeles"
 
@@ -89,9 +90,9 @@ class SkamaniaCountyMixin(CityScrapersSpider, metaclass=SkamaniaCountyMixinMeta)
                 dates = self._extract_dates(text)
                 for date in dates:
                     is_special = "special" in text.lower()
-
-                    if date not in self._seen_dates or is_special:
-                        self._seen_dates.add(date)
+                    meeting_key = (date, is_special)
+                    if meeting_key not in self._seen_dates:
+                        self._seen_dates.add(meeting_key)
 
                         title = (
                             f"{self.agency} - Special Meeting"
@@ -106,7 +107,7 @@ class SkamaniaCountyMixin(CityScrapersSpider, metaclass=SkamaniaCountyMixinMeta)
                             start=self._parse_start(date),
                             end=None,
                             all_day=False,
-                            time_notes="Please check the agenda for meeting time details",  # noqa
+                            time_notes=self.time_notes,
                             location=self.location,
                             links=[
                                 {
@@ -117,7 +118,7 @@ class SkamaniaCountyMixin(CityScrapersSpider, metaclass=SkamaniaCountyMixinMeta)
                             source=self.main_url,
                         )
 
-                        meeting["status"] = self._get_status(meeting)
+                        meeting["status"] = self._get_status(meeting, text)
                         meeting["id"] = self._get_id(meeting)
 
                         yield meeting
@@ -134,6 +135,15 @@ class SkamaniaCountyMixin(CityScrapersSpider, metaclass=SkamaniaCountyMixinMeta)
                 meetings.append(parsed_date)
             except Exception:
                 continue
+
+        if "to" in text.lower() and len(meetings) == 2:
+            start_date, end_date = meetings[0], meetings[1]
+            meetings = []
+            current_date = start_date
+            while current_date <= end_date:
+                meetings.append(current_date)
+                current_date += timedelta(days=1)
+
         return meetings if meetings else []
 
     def _parse_start(self, date):

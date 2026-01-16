@@ -62,7 +62,7 @@ class ColgoColumbiaCommissionSpider(CityScrapersSpider):
                 "name": name.strip(),
                 "address": address.strip(),
             }
-        
+
         return {"name": None, "address": location_text.strip()}
 
     def _get_status(self, item, meeting, text=""):

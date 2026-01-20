@@ -31,7 +31,6 @@ spider_configs = [
         "location": default_location,
         "time_notes": "",
         "_classification": CITY_COUNCIL,
-        "_parse_classification": lambda self, item: self._classification,
     },
     {
         "class_name": "ColgoDallesInformationalSpider",
@@ -41,7 +40,6 @@ spider_configs = [
         "location": default_location,
         "time_notes": "",
         "_classification": NOT_CLASSIFIED,
-        "_parse_classification": lambda self, item: self._classification,
     },
     {
         "class_name": "ColgoDallesPlanningCommissionSpider",
@@ -51,7 +49,6 @@ spider_configs = [
         "location": default_location,
         "time_notes": "",
         "_classification": COMMISSION,
-        "_parse_classification": lambda self, item: self._classification,
     },
     {
         "class_name": "ColgoDallesHistoricLandmarksSpider",
@@ -61,7 +58,6 @@ spider_configs = [
         "location": default_location,
         "time_notes": "",
         "_classification": COMMISSION,
-        "_parse_classification": lambda self, item: self._classification,
     },
     {
         "class_name": "ColgoDallesUrbanRenewalSpider",
@@ -71,7 +67,6 @@ spider_configs = [
         "location": default_location,
         "time_notes": "",
         "_classification": BOARD,
-        "_parse_classification": lambda self, item: self._classification,
     },
 ]
 

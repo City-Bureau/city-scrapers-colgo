@@ -6,11 +6,10 @@ video streaming and meeting management. This mixin handles the common API
 patterns used across all Dalles government agencies.
 """
 
-import json
+import re
 from datetime import datetime, timezone
 
 import scrapy
-from city_scrapers_core.constants import NOT_CLASSIFIED
 from city_scrapers_core.items import Meeting
 from city_scrapers_core.spiders import CityScrapersSpider
 
@@ -22,15 +21,23 @@ class DallesCityMixinMeta(type):
     """
 
     def __init__(cls, name, bases, dct):
-        required_static_vars = ["agency", "name", "category_id", "location"]
-        missing_vars = [var for var in required_static_vars if var not in dct]
+        # Skip validation for the base mixin class itself
+        if name != "DallesCityMixin":
+            required_static_vars = [
+                "agency",
+                "name",
+                "category_id",
+                "location",
+                "_classification",
+            ]
+            missing_vars = [var for var in required_static_vars if var not in dct]
 
-        if missing_vars:
-            missing_vars_str = ", ".join(missing_vars)
-            raise NotImplementedError(
-                f"{name} must define the following static variable(s): "
-                f"{missing_vars_str}."
-            )
+            if missing_vars:
+                missing_vars_str = ", ".join(missing_vars)
+                raise NotImplementedError(
+                    f"{name} must define the following static variable(s): "
+                    f"{missing_vars_str}."
+                )
 
         super().__init__(name, bases, dct)
 
@@ -107,19 +114,19 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
         Yields:
             Meeting items and follow-up requests for pagination
         """
-        data = json.loads(response.text)
+        data = response.json()
 
         # Parse all meetings in current page
         for item in data.get("results", []):
             meeting = Meeting(
                 title=self._parse_title(item),
-                description=self._parse_description(item),
-                classification=self._parse_classification(item),
+                description="",
+                classification=self._classification,
                 start=self._parse_start(item),
-                end=self._parse_end(item),
-                all_day=self._parse_all_day(item),
-                time_notes=self._parse_time_notes(item),
-                location=self._parse_location(item),
+                end=None,
+                all_day=False,
+                time_notes=self.time_notes or "",
+                location=self.location,
                 links=self._parse_links(item),
                 source=self._parse_source(item),
             )
@@ -148,25 +155,11 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
         # Clean up title by removing streaming-related suffixes
         # Use built-in _clean_title to remove common irrelevant information
         title = self._clean_title(title)
-        # Remove OmpNetwork-specific suffixes
-        for suffix in [
-            " - Live Stream",
-            "- Live Stream",
-            " | Live Stream",
-            "| Live Stream",
-        ]:
-            if title.endswith(suffix):
-                title = title[: -len(suffix)].strip()
-                break
+        # Remove OmpNetwork-specific suffixes using regex to catch all variants
+        # Handles: " - Live Stream", "- Live Stream", "-Live Stream",
+        #          " | Live Stream", "| Live Stream", "|Live Stream"
+        title = re.sub(r"\s*[-|]\s*Live Stream$", "", title, flags=re.IGNORECASE).strip()
         return title
-
-    def _parse_description(self, item):
-        """Parse meeting description."""
-        return ""
-
-    def _parse_classification(self, item):
-        """Parse or generate classification from allowed options."""
-        return NOT_CLASSIFIED
 
     def _parse_start(self, item):
         """
@@ -189,28 +182,6 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
                 tzinfo=None
             )
         return None
-
-    def _parse_end(self, item):
-        """Parse end datetime."""
-        return None
-
-    def _parse_time_notes(self, item):
-        """Parse any notes about the meeting time."""
-        return self.time_notes or ""
-
-    def _parse_all_day(self, item):
-        """Parse or generate all-day status."""
-        return False
-
-    def _parse_location(self, item):
-        """
-        Parse or generate location.
-
-        OmpNetwork doesn't typically provide location data in the API,
-        so we use the default location set in the class attribute.
-        Individual spiders can override the location attribute if needed.
-        """
-        return self.location
 
     def _parse_links(self, item):
         """Parse meeting links (agendas, minutes, packets, videos)."""

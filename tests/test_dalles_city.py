@@ -112,7 +112,7 @@ def test_planning_commission_spider():
     assert spider.name == "colgo_dalles_planning_commission"
     assert spider.agency == "The Dalles Planning Commission"
     assert spider.category_id == "216"
-    assert spider._parse_classification({}) == COMMISSION
+    assert spider._classification == COMMISSION
 
 
 def test_urban_renewal_spider():
@@ -121,7 +121,7 @@ def test_urban_renewal_spider():
     assert spider.name == "colgo_dalles_urban_renewal"
     assert spider.agency == "The Dalles Urban Renewal Agency"
     assert spider.category_id == "218"
-    assert spider._parse_classification({}) == BOARD
+    assert spider._classification == BOARD
 
 
 def test_historic_landmarks_spider():
@@ -130,4 +130,4 @@ def test_historic_landmarks_spider():
     assert spider.name == "colgo_dalles_historic_landmarks"
     assert spider.agency == "The Dalles Historic Landmarks Commission"
     assert spider.category_id == "217"
-    assert spider._parse_classification({}) == COMMISSION
+    assert spider._classification == COMMISSION

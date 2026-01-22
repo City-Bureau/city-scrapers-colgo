@@ -1,3 +1,5 @@
+from datetime import time
+
 from city_scrapers.mixins.colgo_skamania import SkamaniaCountyMixin
 
 _location = {
@@ -13,13 +15,14 @@ spider_configs = [
         "agenda_param": "agendas-minutes-meeting-audio/-folder-36#docfold_2924_1241_328_36",  # noqa
         "location": _location,
         "time_notes": (
-            "The public is invited to attend the Skamania County Board of "
-            "Commissioners (BOCC) meetings in person or remotely via Zoom. "
-            "The Board holds its regular business meeting every Tuesday "
-            "beginning at 9:30 a.m. in the boardroom on the lower level "
-            "of the Skamania County Courthouse. Please refer to the meeting "
-            "agenda for the meeting start time."
+            "Please refer to the meeting agenda for more accurate meeting "
+            "start time. The public is invited to attend the Skamania County "
+            "Board of Commissioners (BOCC) meetings in person or remotely "
+            "via Zoom. The Board holds its regular business meeting every "
+            "Tuesday beginning at 9:30 a.m. in the boardroom on the lower "
+            "level of the Skamania County Courthouse."
         ),
+        "_start_time": time(9, 30),
     },
     {
         "class_name": "SkamaniaBohSpider",
@@ -28,11 +31,12 @@ spider_configs = [
         "agenda_param": "board-of-health/-folder-162#docfold_2001_2047_350_162",
         "location": _location,
         "time_notes": (
-            "The Board of Health typically meets on the second Tuesday of "
-            "each month in the Commissioners' Boardroom, located on the "
-            "lower level of the Skamania County Courthouse. Please refer "
-            "to the meeting agenda for the meeting start time."
+            "Please refer to the meeting agenda for more accurate meeting "
+            "start time. The Board of Health typically meets on the second "
+            "Tuesday of each month in the Commissioners' Boardroom, located "
+            "on the lower level of the Skamania County Courthouse."
         ),
+        "_start_time": time(13, 30),
     },
     {
         "class_name": "SkamaniaEmsbSpider",
@@ -41,11 +45,12 @@ spider_configs = [
         "agenda_param": "board-of-ems-district-1/-folder-619#docfold_2001_3132_1205_619",  # noqa
         "location": _location,
         "time_notes": (
-            "The Skamania County Board of EMS District #1 meets annually on "
-            "the second Tuesday of June in the Commissioners' boardroom on "
-            "the bottom floor of the Skamania County Courthouse. Please refer "
-            "to the meeting agenda for the meeting start time."
+            "Please refer to the meeting agenda for more accurate meeting "
+            "start time. The Skamania County Board of EMS District #1 meets "
+            "annually on the second Tuesday of June in the Commissioners' "
+            "boardroom on the bottom floor of the Skamania County Courthouse."
         ),
+        "_start_time": time(13, 30),
     },
 ]
 

@@ -15,7 +15,13 @@ class SkamaniaCountyMixinMeta(type):
     """
 
     def __init__(cls, name, bases, dct):
-        required_static_vars = ["agency", "name", "agenda_param", "time_notes"]
+        required_static_vars = [
+            "agency",
+            "name",
+            "agenda_param",
+            "time_notes",
+            "_start_time",
+        ]
         missing_vars = [var for var in required_static_vars if var not in dct]
 
         if missing_vars:
@@ -33,6 +39,7 @@ class SkamaniaCountyMixin(CityScrapersSpider, metaclass=SkamaniaCountyMixinMeta)
     agency = None
     agenda_param = None
     time_notes = ""
+    _start_time = datetime.min.time()
 
     timezone = "America/Los_Angeles"
 
@@ -147,4 +154,4 @@ class SkamaniaCountyMixin(CityScrapersSpider, metaclass=SkamaniaCountyMixinMeta)
         return meetings if meetings else []
 
     def _parse_start(self, date):
-        return datetime.combine(date, datetime.min.time())
+        return datetime.combine(date, self._start_time)

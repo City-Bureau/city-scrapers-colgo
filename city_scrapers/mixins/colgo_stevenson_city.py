@@ -209,7 +209,7 @@ class ColgoStevensonCitySpiderMixin(
     def _get_status(self, meeting, text=""):
         combined_text = f"{meeting.get('title', '')} {text}".lower()
 
-        if "cancelled" in combined_text:
+        if "cancelled" in combined_text or "canceled" in combined_text:
             return CANCELLED
 
         # Rescheduled ≠ cancelled on this site

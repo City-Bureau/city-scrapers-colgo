@@ -52,13 +52,18 @@ class ColgoColumbiaCommissionSpider(CityScrapersSpider):
             item.css("li i.icon-map-marker2").xpath("following-sibling::text()").get()
         )
 
-        parts = location_text.split(" at ", 1)
+        if not location_text:
+            return {"name": None, "address": None}
 
-        location = {
-            "name": parts[1].strip(),
-            "address": parts[0].strip(),
-        }
-        return location
+        if " at " in location_text:
+            address, name = location_text.split(" at ", 1)
+
+            return {
+                "name": name.strip(),
+                "address": address.strip(),
+            }
+
+        return {"name": None, "address": location_text.strip()}
 
     def _get_status(self, item, meeting, text=""):
         title_div = item.css(".entry-title a::text").get()

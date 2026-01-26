@@ -158,7 +158,9 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
         # Remove OmpNetwork-specific suffixes using regex to catch all variants
         # Handles: " - Live Stream", "- Live Stream", "-Live Stream",
         #          " | Live Stream", "| Live Stream", "|Live Stream"
-        title = re.sub(r"\s*[-|]\s*Live Stream$", "", title, flags=re.IGNORECASE).strip()
+        title = re.sub(
+            r"\s*[-|]\s*Live Stream$", "", title, flags=re.IGNORECASE
+        ).strip()
         return title
 
     def _parse_start(self, item):

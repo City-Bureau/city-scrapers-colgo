@@ -15,10 +15,10 @@ from city_scrapers_core.constants import BOARD, CITY_COUNCIL, COMMISSION, NOT_CL
 
 from city_scrapers.mixins.dalles_city import DallesCityMixin
 
-# Common location used by multiple agencies
+# Location is not available from the API; users should check the source/agenda
 default_location = {
-    "name": "The Dalles City Hall",
-    "address": "313 Court St, The Dalles, OR 97058",
+    "name": "Location unavailable",
+    "address": "Check source or agenda for location details",
 }
 
 # Configuration for each spider

@@ -70,8 +70,8 @@ def test_status(parsed_items):
 
 def test_location(parsed_items):
     assert parsed_items[0]["location"] == {
-        "name": "The Dalles City Hall",
-        "address": "313 Court St, The Dalles, OR 97058",
+        "name": "Location unavailable",
+        "address": "Check source or agenda for location details",
     }
 
 

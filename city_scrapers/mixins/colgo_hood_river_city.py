@@ -576,6 +576,41 @@ class ColgoHoodRiverCityMixin(
             pass
         return None
 
+    def _force_https(self, url: str) -> str:
+        return re.sub(r"^http://", "https://", (url or "").strip())
+
+    def _wayback_raw(self, snapshot_url: str) -> str:
+        """
+        Convert replay URL to a more raw capture URL using id_.
+        https://web.archive.org/web/<ts>/<orig>
+        -> https://web.archive.org/web/<ts>id_/<orig>
+        """
+        snapshot_url = self._force_https(snapshot_url)
+        m = re.match(
+            r"^https?://web\.archive\.org/web/(\d+)([^/]*)/(.+)$", snapshot_url
+        )
+        if not m:
+            return snapshot_url
+
+        ts, flags, original = m.group(1), (m.group(2) or ""), m.group(3)
+        if "id_" in flags:
+            return snapshot_url
+        return f"https://web.archive.org/web/{ts}id_/{original}"
+
+    def _looks_like_pdf(self, response) -> bool:
+        """
+        True only if bytes look like a real PDF, not an HTML replay/wrapper.
+        """
+        body = (response.body or b"").lstrip()
+
+        # Hard reject obvious HTML
+        lowered = body[:400].lower()
+        if b"<html" in lowered or b"<!doctype html" in lowered:
+            return False
+
+        # PDFs must begin with %PDF
+        return body.startswith(b"%PDF")
+
     def _validate_links_async(self, meeting):
         """Validate links asynchronously using HEAD requests."""
         links_to_validate = [
@@ -703,8 +738,7 @@ class ColgoHoodRiverCityMixin(
 
     def _handle_wayback_lookup(self, response):
         """
-        If Wayback has a snapshot URL, keep the attachment by replacing href
-        with the archived URL. If not, ignore attachment (same behavior as before).
+        If Wayback has a snapshot URL, validate it (Range GET) and only keep it if it's a real PDF. # noqa
         """
         meeting = response.meta["meeting"]
         original_link = response.meta["original_link"]
@@ -721,20 +755,40 @@ class ColgoHoodRiverCityMixin(
                 f"Wayback lookup parse failed for {original_link['href']}: {e}"
             )
 
-        if snapshot_url:
-            # Use the archived URL as the href, keep the same title
-            archived_link = {
-                "href": self._normalize_url(snapshot_url),
-                "title": original_link.get("title", "Attachment"),
-            }
-            validated_links.append(archived_link)
-        else:
-            # No snapshot => ignore (same as your current skip behavior)
+        if not snapshot_url:
             self.logger.warning(
                 f"No Wayback snapshot found for 404 link: {original_link['href']}"
             )
+            yield from self._continue_after_wayback(
+                meeting, remaining_links, validated_links, external_links
+            )
+            return
 
-        # Continue with next link or yield meeting
+        # Force https + raw bytes form
+        snapshot_url = self._wayback_raw(snapshot_url)
+
+        # Validate that it actually serves PDF bytes (don't accept HTML replay pages)
+        yield scrapy.Request(
+            url=snapshot_url,
+            method="GET",
+            headers={"Range": "bytes=0-1024"},
+            callback=self._handle_wayback_snapshot_validation,
+            errback=self._handle_wayback_snapshot_error,
+            dont_filter=True,
+            meta={
+                "meeting": meeting,
+                "original_link": original_link,
+                "snapshot_url": snapshot_url,
+                "remaining_links": remaining_links,
+                "validated_links": validated_links,
+                "external_links": external_links,
+            },
+        )
+
+    def _continue_after_wayback(
+        self, meeting, remaining_links, validated_links, external_links
+    ):
+        """Continue with next link or yield meeting."""
         if remaining_links:
             next_link = remaining_links[0]
             yield scrapy.Request(
@@ -755,6 +809,90 @@ class ColgoHoodRiverCityMixin(
         else:
             meeting["links"] = validated_links + external_links
             yield meeting
+
+    def _handle_wayback_snapshot_validation(self, response):
+        meeting = response.meta["meeting"]
+        original_link = response.meta["original_link"]
+        snapshot_url = response.meta["snapshot_url"]
+        remaining_links = response.meta["remaining_links"]
+        validated_links = response.meta["validated_links"]
+        external_links = response.meta["external_links"]
+
+        # Must look like a real PDF header
+        if response.status >= 400 or not self._looks_like_pdf(response):
+            ct = (response.headers.get(b"Content-Type") or b"").decode(
+                "latin-1", "ignore"
+            )
+            self.logger.warning(
+                f"Wayback snapshot not a usable PDF header (status={response.status}, ct={ct}): {snapshot_url}"  # noqa
+            )
+            yield from self._continue_after_wayback(
+                meeting, remaining_links, validated_links, external_links
+            )
+            return
+
+        # Now verify the PDF ends properly (tail contains %%EOF)
+        yield scrapy.Request(
+            url=snapshot_url,
+            method="GET",
+            headers={"Range": "bytes=-4096"},
+            callback=self._handle_wayback_snapshot_tail_validation,
+            errback=self._handle_wayback_snapshot_error,
+            dont_filter=True,
+            meta={
+                "meeting": meeting,
+                "original_link": original_link,
+                "snapshot_url": snapshot_url,
+                "remaining_links": remaining_links,
+                "validated_links": validated_links,
+                "external_links": external_links,
+            },
+        )
+
+    def _handle_wayback_snapshot_tail_validation(self, response):
+        meeting = response.meta["meeting"]
+        original_link = response.meta["original_link"]
+        snapshot_url = response.meta["snapshot_url"]
+        remaining_links = response.meta["remaining_links"]
+        validated_links = response.meta["validated_links"]
+        external_links = response.meta["external_links"]
+
+        body = response.body or b""
+
+        # Some servers ignore the negative range; still okay — we just check for EOF marker # noqa
+        if b"%%EOF" not in body:
+            self.logger.warning(
+                f"Wayback PDF looks truncated (missing %%EOF): {snapshot_url}"
+            )
+            yield from self._continue_after_wayback(
+                meeting, remaining_links, validated_links, external_links
+            )
+            return
+
+        # Passed: keep it
+        validated_links.append(
+            {
+                "href": self._normalize_url(self._force_https(snapshot_url)),
+                "title": original_link.get("title", "Attachment"),
+            }
+        )
+
+        yield from self._continue_after_wayback(
+            meeting, remaining_links, validated_links, external_links
+        )
+
+    def _handle_wayback_snapshot_error(self, failure):
+        request = failure.request
+        meeting = request.meta["meeting"]
+        snapshot_url = request.meta["snapshot_url"]
+        remaining_links = request.meta["remaining_links"]
+        validated_links = request.meta["validated_links"]
+        external_links = request.meta["external_links"]
+
+        self.logger.warning(f"Wayback snapshot validation failed: {snapshot_url}")
+        yield from self._continue_after_wayback(
+            meeting, remaining_links, validated_links, external_links
+        )
 
     def _handle_wayback_error(self, failure):
         """If Wayback API fails, ignore the attachment and continue."""
@@ -769,26 +907,9 @@ class ColgoHoodRiverCityMixin(
             f"Wayback lookup failed; skipping 404 link: {original_link['href']}"
         )
 
-        if remaining_links:
-            next_link = remaining_links[0]
-            yield scrapy.Request(
-                url=next_link["href"],
-                method="HEAD",
-                callback=self._handle_link_validation,
-                errback=self._handle_link_error,
-                dont_filter=True,
-                meta={
-                    "meeting": meeting,
-                    "current_link": next_link,
-                    "remaining_links": remaining_links[1:],
-                    "validated_links": validated_links,
-                    "external_links": external_links,
-                    "handle_httpstatus_list": [404],
-                },
-            )
-        else:
-            meeting["links"] = validated_links + external_links
-            yield meeting
+        yield from self._continue_after_wayback(
+            meeting, remaining_links, validated_links, external_links
+        )
 
     def _parse_links(self, item):
         """Collect agenda/minutes/packet links for later async validation."""

@@ -586,7 +586,9 @@ class ColgoHoodRiverCityMixin(
         -> https://web.archive.org/web/<ts>id_/<orig>
         """
         snapshot_url = self._force_https(snapshot_url)
-        m = re.match(r"^https?://web\.archive\.org/web/(\d+)([^/]*)/(.+)$", snapshot_url)
+        m = re.match(
+            r"^https?://web\.archive\.org/web/(\d+)([^/]*)/(.+)$", snapshot_url
+        )
         if not m:
             return snapshot_url
 
@@ -736,7 +738,7 @@ class ColgoHoodRiverCityMixin(
 
     def _handle_wayback_lookup(self, response):
         """
-        If Wayback has a snapshot URL, validate it (Range GET) and only keep it if it's a real PDF.
+        If Wayback has a snapshot URL, validate it (Range GET) and only keep it if it's a real PDF. # noqa
         """
         meeting = response.meta["meeting"]
         original_link = response.meta["original_link"]
@@ -783,7 +785,9 @@ class ColgoHoodRiverCityMixin(
             },
         )
 
-    def _continue_after_wayback(self, meeting, remaining_links, validated_links, external_links):
+    def _continue_after_wayback(
+        self, meeting, remaining_links, validated_links, external_links
+    ):
         """Continue with next link or yield meeting."""
         if remaining_links:
             next_link = remaining_links[0]
@@ -816,9 +820,11 @@ class ColgoHoodRiverCityMixin(
 
         # Must look like a real PDF header
         if response.status >= 400 or not self._looks_like_pdf(response):
-            ct = (response.headers.get(b"Content-Type") or b"").decode("latin-1", "ignore")
+            ct = (response.headers.get(b"Content-Type") or b"").decode(
+                "latin-1", "ignore"
+            )
             self.logger.warning(
-                f"Wayback snapshot not a usable PDF header (status={response.status}, ct={ct}): {snapshot_url}"
+                f"Wayback snapshot not a usable PDF header (status={response.status}, ct={ct}): {snapshot_url}"  # noqa
             )
             yield from self._continue_after_wayback(
                 meeting, remaining_links, validated_links, external_links
@@ -853,7 +859,7 @@ class ColgoHoodRiverCityMixin(
 
         body = response.body or b""
 
-        # Some servers ignore the negative range; still okay — we just check for EOF marker
+        # Some servers ignore the negative range; still okay — we just check for EOF marker # noqa
         if b"%%EOF" not in body:
             self.logger.warning(
                 f"Wayback PDF looks truncated (missing %%EOF): {snapshot_url}"

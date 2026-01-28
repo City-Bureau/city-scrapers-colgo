@@ -61,7 +61,6 @@ class ColgoHoodRiverCityMixin(
     title_filter = None
 
     timezone = "America/Los_Angeles"
-    start_urls = ["https://cityofhoodriver.gov/administration/meetings/"]
     location = {
         "name": "Hood River City Hall",
         "address": "211 2nd Street, Hood River, OR 97031",
@@ -327,7 +326,7 @@ class ColgoHoodRiverCityMixin(
 
             meeting = Meeting(
                 title=title,
-                description=self._parse_description(event),
+                description="",
                 classification=self._parse_classification(title),
                 start=start,
                 end=self._parse_end(event),
@@ -410,10 +409,6 @@ class ColgoHoodRiverCityMixin(
         if cleaned:
             return cleaned
 
-        return ""
-
-    def _parse_description(self, item):
-        """Parse or generate meeting description."""
         return ""
 
     def _parse_classification(self, title):
@@ -563,7 +558,7 @@ class ColgoHoodRiverCityMixin(
         """Wayback 'available' API endpoint for a given URL."""
         return f"https://archive.org/wayback/available?url={quote(url, safe='')}"
 
-    def _get_wayback_snapshot_url(self, data: dict) -> str | None:
+    def _get_wayback_snapshot_url(self, data: dict):
         """
         Extract a usable snapshot URL from Wayback 'available' API JSON.
         Returns None if nothing is available.

@@ -136,17 +136,26 @@ class WhiteSalmonMixin(CityScrapersSpider):
         Yields:
             Request: Requests to individual meeting detail pages
         """
-        # Find all meeting links in the calendar
-        meeting_links = response.css(
-            ".view-item-calendar .views-field-title a::attr(href)"
-        ).getall()
+        # Each calendar item contains the meeting link and its datetime
+        for item in response.css(".view-item-calendar"):
+            link = item.css(".views-field-title a::attr(href)").get()
+            if not link:
+                continue
 
-        for link in meeting_links:
             # Filter by meeting_keyword to only scrape relevant meetings
             if self.meeting_keyword and self.meeting_keyword not in link:
                 continue
+
+            calendar_dt = item.css(
+                ".views-field-field-calendar-date .date-display-single::attr(content)"
+            ).get()
+
+            meta = {}
+            if calendar_dt:
+                meta["calendar_start"] = calendar_dt
+
             full_url = response.urljoin(link)
-            yield scrapy.Request(url=full_url, callback=self.parse_meeting)
+            yield scrapy.Request(url=full_url, callback=self.parse_meeting, meta=meta)
 
     def parse_meeting(self, response):
         """
@@ -198,21 +207,33 @@ class WhiteSalmonMixin(CityScrapersSpider):
         Returns:
             datetime: Naive datetime object or None
         """
-        # Look for ISO datetime in content attribute
-        dt_str = response.css(
+        # Prefer the datetime captured from the calendar grid
+        calendar_dt = response.meta.get("calendar_start")
+        if calendar_dt:
+            parsed = self._parse_iso_datetime(calendar_dt)
+            if parsed:
+                return parsed
+
+        # Fallback to datetime from the detail page
+        detail_dt = response.css(
             ".calendar-date span.date-display-single::attr(content)"
         ).get()
 
-        if dt_str:
-            try:
-                # Parse ISO format: 2025-12-17T18:00:00-08:00
-                dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-                # Return naive datetime (timezone handled by spider)
-                return dt.replace(tzinfo=None)
-            except ValueError:
-                self.logger.debug("Failed to parse datetime: %s", dt_str)
+        if detail_dt:
+            parsed = self._parse_iso_datetime(detail_dt)
+            if parsed:
+                return parsed
 
         return None
+
+    def _parse_iso_datetime(self, dt_str: str):
+        """Parse an ISO datetime string with offset into a naive datetime."""
+        try:
+            dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+            return dt.replace(tzinfo=None)
+        except ValueError:
+            self.logger.debug("Failed to parse datetime: %s", dt_str)
+            return None
 
     def _parse_location(self, response):
         """

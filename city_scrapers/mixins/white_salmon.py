@@ -205,28 +205,23 @@ class WhiteSalmonMixin(CityScrapersSpider):
         Parse meeting start datetime from detail page.
 
         The datetime is stored in ISO format in the content attribute
-        of span.date-display-single elements.
+        of span.date-display-single elements. Tries multiple sources
+        in priority order: calendar grid datetime, then detail page datetime.
 
         Returns:
             datetime: Naive datetime object or None
         """
-        # Prefer the datetime captured from the calendar grid
-        calendar_dt = response.meta.get("calendar_start")
-        if calendar_dt:
-            parsed = self._parse_iso_datetime(calendar_dt)
-            if parsed:
-                return parsed
-
-        # Fallback to datetime from the detail page
-        detail_dt = response.css(
-            ".calendar-date span.date-display-single::attr(content)"
-        ).get()
-
-        if detail_dt:
-            parsed = self._parse_iso_datetime(detail_dt)
-            if parsed:
-                return parsed
-
+        candidates = [
+            response.meta.get("calendar_start"),
+            response.css(
+                ".calendar-date span.date-display-single::attr(content)"
+            ).get(),
+        ]
+        for dt_str in candidates:
+            if dt_str:
+                parsed = self._parse_iso_datetime(dt_str)
+                if parsed:
+                    return parsed
         return None
 
     def _parse_iso_datetime(self, dt_str: str):

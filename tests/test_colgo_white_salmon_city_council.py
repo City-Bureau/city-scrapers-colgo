@@ -43,6 +43,15 @@ def test_calendar_request_url():
     assert any("city-council-meeting" in url for url in urls)
 
 
+def test_calendar_request_meta_contains_calendar_start():
+    """Test that calendar parsing passes calendar_start datetime in request meta."""
+    # All requests should have calendar_start in meta from the calendar grid
+    for req in calendar_requests:
+        assert "calendar_start" in req.meta
+        # Should be ISO format datetime string
+        assert "T" in req.meta["calendar_start"]
+
+
 # ============================================================================
 # Test detail page parsing (source: detail HTML → Meeting item)
 # ============================================================================
@@ -125,3 +134,32 @@ def test_links(parsed_item):
 
 def test_all_day(parsed_item):
     assert parsed_item["all_day"] is False
+
+
+# ============================================================================
+# Test _parse_start fallback pattern
+# ============================================================================
+@pytest.fixture(scope="module")
+def parsed_item_with_calendar_start():
+    """Test that calendar_start from meta takes priority over detail page date."""
+    detail_response = file_response(
+        join(dirname(__file__), "files", "colgo_white_salmon_city_council_detail.html"),
+        url="https://www.whitesalmonwa.gov/citycouncil/page/city-council-meeting-152",
+    )
+    # Inject calendar_start in meta (simulating what parse() does)
+    detail_response.meta["calendar_start"] = "2026-03-04T18:00:00-08:00"
+    with freeze_time("2025-12-22"):
+        items = list(spider.parse_meeting(detail_response))
+    return items[0] if items else None
+
+
+def test_start_uses_calendar_meta(parsed_item_with_calendar_start):
+    """Test that _parse_start prefers calendar_start from meta."""
+    # Should use the calendar_start from meta, not the detail page date
+    assert parsed_item_with_calendar_start["start"] == datetime(2026, 3, 4, 18, 0)
+
+
+def test_start_fallback_to_detail_page(parsed_item):
+    """Test that _parse_start falls back to detail page when no calendar_start."""
+    # The parsed_item fixture has no calendar_start in meta, so it uses detail page
+    assert parsed_item["start"] == datetime(2025, 12, 17, 18, 0)

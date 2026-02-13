@@ -85,6 +85,7 @@ class WhiteSalmonMixin(CityScrapersSpider):
 
     # Rate limiting settings to avoid 429 errors
     custom_settings = {
+        "ROBOTSTXT_OBEY": False,
         "DOWNLOAD_DELAY": 2,  # 2 seconds between requests
         "RANDOMIZE_DOWNLOAD_DELAY": True,  # Randomize delay between 0.5x and 1.5x
         "CONCURRENT_REQUESTS_PER_DOMAIN": 1,  # Only 1 concurrent request per domain
@@ -102,7 +103,7 @@ class WhiteSalmonMixin(CityScrapersSpider):
     # Number of years to scrape into the past
     years_back = 3
     # Number of months to scrape into the future
-    months_ahead = 3
+    months_ahead = 12
 
     def start_requests(self):
         """
@@ -136,17 +137,28 @@ class WhiteSalmonMixin(CityScrapersSpider):
         Yields:
             Request: Requests to individual meeting detail pages
         """
-        # Find all meeting links in the calendar
-        meeting_links = response.css(
-            ".view-item-calendar .views-field-title a::attr(href)"
-        ).getall()
+        # Each calendar item contains the meeting link and its datetime
+        for item in response.css(".view-item-calendar"):
+            link = item.css(".views-field-title a::attr(href)").get()
+            if not link:
+                continue
 
-        for link in meeting_links:
             # Filter by meeting_keyword to only scrape relevant meetings
             if self.meeting_keyword and self.meeting_keyword not in link:
                 continue
+
+            calendar_dt = item.css(
+                ".views-field-field-calendar-date .date-display-single::attr(content)"
+            ).get()
+
+            meta = {}
+            if calendar_dt:
+                meta["calendar_start"] = calendar_dt
+
             full_url = response.urljoin(link)
-            yield scrapy.Request(url=full_url, callback=self.parse_meeting)
+            yield scrapy.Request(
+                url=full_url, callback=self.parse_meeting, meta=meta, dont_filter=True
+            )
 
     def parse_meeting(self, response):
         """
@@ -193,26 +205,33 @@ class WhiteSalmonMixin(CityScrapersSpider):
         Parse meeting start datetime from detail page.
 
         The datetime is stored in ISO format in the content attribute
-        of span.date-display-single elements.
+        of span.date-display-single elements. Tries multiple sources
+        in priority order: calendar grid datetime, then detail page datetime.
 
         Returns:
             datetime: Naive datetime object or None
         """
-        # Look for ISO datetime in content attribute
-        dt_str = response.css(
-            ".calendar-date span.date-display-single::attr(content)"
-        ).get()
-
-        if dt_str:
-            try:
-                # Parse ISO format: 2025-12-17T18:00:00-08:00
-                dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-                # Return naive datetime (timezone handled by spider)
-                return dt.replace(tzinfo=None)
-            except ValueError:
-                self.logger.debug("Failed to parse datetime: %s", dt_str)
-
+        candidates = [
+            response.meta.get("calendar_start"),
+            response.css(
+                ".calendar-date span.date-display-single::attr(content)"
+            ).get(),
+        ]
+        for dt_str in candidates:
+            if dt_str:
+                parsed = self._parse_iso_datetime(dt_str)
+                if parsed:
+                    return parsed
         return None
+
+    def _parse_iso_datetime(self, dt_str: str):
+        """Parse an ISO datetime string with offset into a naive datetime."""
+        try:
+            dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+            return dt.replace(tzinfo=None)
+        except ValueError:
+            self.logger.debug("Failed to parse datetime: %s", dt_str)
+            return None
 
     def _parse_location(self, response):
         """

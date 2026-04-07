@@ -48,7 +48,7 @@ spider_configs = [
 ]
 
 
-def create_spiders():
+def _create_spiders():
     """
     Dynamically create spider classes using the spider_configs list
     and register them in the global namespace.
@@ -68,4 +68,4 @@ def create_spiders():
             globals()[class_name] = spider_class
 
 
-create_spiders()
+_create_spiders()

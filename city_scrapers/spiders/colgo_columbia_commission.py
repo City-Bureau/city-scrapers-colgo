@@ -73,7 +73,7 @@ class ColgoColumbiaCommissionSpider(CityScrapersSpider):
 
     def _clean_text(self, selector, css):
         return (
-            "".join(t.strip() for t in selector.css(css).getall())
+            " ".join(t.strip() for t in selector.css(css).getall())
             .replace("\n", "")
             .strip()
         )
@@ -94,11 +94,10 @@ class ColgoColumbiaCommissionSpider(CityScrapersSpider):
                 start_time = time_text[0].strip()
                 end_time = time_text[1].strip()
 
-            start_dt_str = f"{date_text} {start_time}"
-            end_dt_str = f"{date_text} {end_time}" if end_time else f"{date_text}"
-
-            start_dt_obj = dateparser.parse(start_dt_str)
-            end_dt_obj = dateparser.parse(end_dt_str)
+            start_dt_obj = dateparser.parse(f"{date_text} {start_time}")
+            end_dt_obj = None
+            if end_time:
+                end_dt_obj = dateparser.parse(f"{date_text} {end_time}")
 
             return start_dt_obj, end_dt_obj
         except Exception as e:

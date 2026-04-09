@@ -2,7 +2,7 @@ from datetime import datetime
 from os.path import dirname, join
 
 import pytest
-from city_scrapers_core.constants import COMMITTEE
+from city_scrapers_core.constants import COMMITTEE, TENTATIVE
 from city_scrapers_core.utils import file_response
 from freezegun import freeze_time
 
@@ -12,75 +12,95 @@ from city_scrapers.spiders.colgo_columbia_commission import (
 
 upcoming_meetings = file_response(
     join(dirname(__file__), "files", "colgo_columbia_commission_upcoming.html"),
-    url="https://www.gorgecommission.org/about-crgc/commission-meetings",
+    url="https://gorgecommission.org/home/meetings/",
 )
 
-spider = ColgoColumbiaCommissionSpider()
-
-freezer = freeze_time("2026-01-06")
-freezer.start()
-
-parsed_items = [item for item in spider.parse(upcoming_meetings)]
-
-freezer.stop()
+sample_meeting_details = file_response(
+    join(dirname(__file__), "files", "colgo_columbia_commission_meeting_detail.html"),
+    url="https://gorgecommission.org/meeting/columbia-river-gorge-commission-economic-vitality-committee-meeting-4-1-2026/",  # noqa
+)
 
 
-def test_title():
-    assert parsed_items[0]["title"] == "January 2026 Monthly CRGC Meeting"
+@pytest.fixture
+def spider():
+    return ColgoColumbiaCommissionSpider()
 
 
-def test_description():
-    assert parsed_items[0]["description"] == ""
+@pytest.fixture
+def request_items(spider):
+    with freeze_time("2026-04-08"):
+        return [request for request in spider.parse(upcoming_meetings)]
 
 
-def test_start():
-    assert parsed_items[0]["start"] == datetime(2026, 1, 13, 8, 30)
+@pytest.fixture
+def parsed_item(spider):
+    with freeze_time("2026-04-08"):
+        return next(spider._parse_meeting(sample_meeting_details))
 
 
-def test_end():
-    assert parsed_items[0]["end"] == datetime(2026, 1, 13, 12, 0)
+def test_count(request_items):
+    assert len(request_items) == 27
 
 
-def test_time_notes():
+def test_title(parsed_item):
     assert (
-        parsed_items[0]["time_notes"]
-        == "For meeting time and registration details, please check the Agenda."
+        parsed_item["title"]
+        == "Columbia River Gorge Commission Economic Vitality Committee Meeting"
     )
 
 
-def test_id():
+def test_description(parsed_item):
     assert (
-        parsed_items[0]["id"]
-        == "colgo_columbia_commission/202601130830/x/january_2026_monthly_crgc_meeting"
+        parsed_item["description"]
+        == "The Zoom link to join the meeting is located in the agenda."
     )
 
 
-def test_status():
-    assert parsed_items[0]["status"] == "tentative"
+def test_start(parsed_item):
+    assert parsed_item["start"] == datetime(2026, 4, 8, 12, 0)
 
 
-def test_location():
-    assert parsed_items[0]["location"] == {
-        "name": "via Zoom webinar",
-        "address": "White Salmon, WA",
+def test_end(parsed_item):
+    assert parsed_item["end"] == datetime(2026, 4, 8, 13, 30)
+
+
+def test_time_notes(parsed_item):
+    assert parsed_item["time_notes"] == ""
+
+
+def test_id(parsed_item):
+    assert (
+        parsed_item["id"]
+        == "colgo_columbia_commission/202604081200/x/columbia_river_gorge_commission_economic_vitality_committee_meeting"  # noqa
+    )
+
+
+def test_status(parsed_item):
+    assert parsed_item["status"] == TENTATIVE
+
+
+def test_location(parsed_item):
+    assert parsed_item["location"] == {
+        "name": "",
+        "address": "",
     }
 
 
-def test_source():
+def test_source(parsed_item):
     assert (
-        parsed_items[0]["source"]
-        == "https://www.gorgecommission.org/about-crgc/commission-meetings"
+        parsed_item["source"]
+        == "https://gorgecommission.org/meeting/columbia-river-gorge-commission-economic-vitality-committee-meeting-4-1-2026/"  # noqa
     )
 
 
-def test_links():
-    assert parsed_items[0]["links"] == []
+def test_links(parsed_item):
+    assert parsed_item["links"] == [
+        {
+            "href": "https://gorgecommission.org/wp-content/uploads/2026/03/Economic-Vitality-Committee-Meeting-Agenda-2026.04.08.pdf",  # noqa
+            "title": "Economic Vitality Committee Meeting Agenda - 4/8/2026",
+        },
+    ]
 
 
-def test_classification():
-    assert parsed_items[0]["classification"] == COMMITTEE
-
-
-@pytest.mark.parametrize("item", parsed_items)
-def test_all_day(item):
-    assert item["all_day"] is False
+def test_classification(parsed_item):
+    assert parsed_item["classification"] == COMMITTEE

@@ -10,9 +10,7 @@ from city_scrapers_core.constants import COMMISSION, PASSED
 from city_scrapers_core.utils import file_response
 from freezegun import freeze_time
 
-from city_scrapers.spiders.colgo_white_salmon_civil_service import (
-    ColgoWhiteSalmonCivilServiceSpider,
-)
+from city_scrapers.spiders.colgo_white_salmon import ColgoWhiteSalmonCivilServiceSpider
 
 spider = ColgoWhiteSalmonCivilServiceSpider()
 

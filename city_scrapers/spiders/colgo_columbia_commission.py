@@ -4,7 +4,6 @@ from city_scrapers_core.constants import COMMITTEE
 from city_scrapers_core.items import Meeting
 from city_scrapers_core.spiders import CityScrapersSpider
 from dateutil import parser as dateparser
-from unidecode import unidecode
 
 
 class ColgoColumbiaCommissionSpider(CityScrapersSpider):
@@ -14,6 +13,7 @@ class ColgoColumbiaCommissionSpider(CityScrapersSpider):
 
     custom_settings = {
         "ROBOTSTXT_OBEY": False,
+        "FEED_EXPORT_ENCODING": "utf-8",
     }
 
     """
@@ -65,10 +65,9 @@ class ColgoColumbiaCommissionSpider(CityScrapersSpider):
         return " ".join(title)
 
     def _parse_description(self, item):
-        desc_div = item.css("div.copy.copy-2.flow.default-content p::text").get()
-        if desc_div:
-            normalized_desc = unidecode(desc_div).strip()
-            return normalized_desc
+        desc_text = item.css("div.copy.copy-2.flow.default-content p::text").get()
+        if desc_text:
+            return desc_text.strip()
         return ""
 
     def _clean_text(self, selector, css):

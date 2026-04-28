@@ -122,7 +122,7 @@ class ColgoColumbiaCommissionSpider(CityScrapersSpider):
 
         # Pattern 2: "City, State at Venue and via zoom"
         # Example: "Cascade Locks, OR at the Gorge Pavilion and via zoom"
-        pattern2 = r"(.+?)\s+at\s+(.+?)\s+and\s+via\s+zoom"
+        pattern2 = r"(.+?)\s+at\s+(.+)"
         match = re.search(pattern2, location_text, re.IGNORECASE)
 
         if match:

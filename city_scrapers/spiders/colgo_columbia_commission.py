@@ -108,16 +108,27 @@ class ColgoColumbiaCommissionSpider(CityScrapersSpider):
         if not location_text:
             return {"name": "", "address": ""}
 
-        # Pattern: "In person location: Name, Address"
+        # Pattern 1: "In person location: Name, Address"
         # Example: "In person location: Elk Ridge Golf Course,
         # 1 St. Martin's Springs Rd, Carson, Washington"
-        pattern = r"In person location:\s*([^,]+),\s*(.+)"
-        match = re.search(pattern, location_text, re.IGNORECASE)
+        pattern1 = r"In person location:\s*([^,]+),\s*(.+)"
+        match = re.search(pattern1, location_text, re.IGNORECASE)
 
         if match:
             return {
                 "name": match.group(1).strip(),
                 "address": match.group(2).strip(),
+            }
+
+        # Pattern 2: "City, State at Venue and via zoom"
+        # Example: "Cascade Locks, OR at the Gorge Pavilion and via zoom"
+        pattern2 = r"(.+?)\s+at\s+(.+?)\s+and\s+via\s+zoom"
+        match = re.search(pattern2, location_text, re.IGNORECASE)
+
+        if match:
+            return {
+                "name": match.group(2).strip(),
+                "address": match.group(1).strip(),
             }
 
         return {"name": "", "address": ""}

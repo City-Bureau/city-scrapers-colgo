@@ -45,7 +45,7 @@ class ColgoColumbiaCommissionSpider(CityScrapersSpider):
             end=end,
             all_day=False,
             time_notes="",
-            location=self.location,
+            location=self._parse_location(item),
             links=self._parse_links(item),
             source=item.url,
         )
@@ -102,6 +102,25 @@ class ColgoColumbiaCommissionSpider(CityScrapersSpider):
         except Exception as e:
             self.logger.warning(f"Error parsing time: {e}")
             return None, None
+
+    def _parse_location(self, item):
+        location_text = self._clean_text(item, "p.meeting__location ::text")
+        if not location_text:
+            return {"name": "", "address": ""}
+
+        # Pattern: "In person location: Name, Address"
+        # Example: "In person location: Elk Ridge Golf Course,
+        # 1 St. Martin's Springs Rd, Carson, Washington"
+        pattern = r"In person location:\s*([^,]+),\s*(.+)"
+        match = re.search(pattern, location_text, re.IGNORECASE)
+
+        if match:
+            return {
+                "name": match.group(1).strip(),
+                "address": match.group(2).strip(),
+            }
+
+        return {"name": "", "address": ""}
 
     def _parse_links(self, item):
         links = []

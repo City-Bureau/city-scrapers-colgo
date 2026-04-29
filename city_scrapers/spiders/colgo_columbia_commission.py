@@ -1,119 +1,138 @@
-import datetime
 import re
 
-from city_scrapers_core.constants import CANCELLED, COMMITTEE
+from city_scrapers_core.constants import COMMITTEE
 from city_scrapers_core.items import Meeting
 from city_scrapers_core.spiders import CityScrapersSpider
+from dateutil import parser as dateparser
 
 
 class ColgoColumbiaCommissionSpider(CityScrapersSpider):
     name = "colgo_columbia_commission"
     agency = "Columbia River Gorge Commission"
     timezone = "America/Los_Angeles"
-    base_url = "https://www.gorgecommission.org"
+
+    custom_settings = {
+        "ROBOTSTXT_OBEY": False,
+        "FEED_EXPORT_ENCODING": "utf-8",
+    }
+
     start_urls = [
-        "https://www.gorgecommission.org/about-crgc/commission-meetings",
-        "https://www.gorgecommission.org/meeting/archived",
+        "https://gorgecommission.org/home/past/",
+        "https://gorgecommission.org/home/meetings/",
     ]
 
-    time_notes = "For meeting time and registration details, please check the Agenda."
-
     def parse(self, response):
-        meetings = response.css("div.entry.clearfix > div.entry-c")
-        for item in meetings:
-            meeting = Meeting(
-                title=self._parse_title(item),
-                description="",
-                classification=COMMITTEE,
-                start=self._parse_time(item, "start"),
-                end=self._parse_time(item, "end"),
-                all_day=False,
-                time_notes=self._parse_time_notes(item),
-                location=self._parse_location(item),
-                links=self._parse_links(item),
-                source=response.url,
-            )
+        detail_links = response.css("a.connect__meetings-link ::attr(href)").getall()
+        for link in detail_links:
+            yield response.follow(link, callback=self._parse_meeting)
 
-            meeting["status"] = self._get_status(item, meeting)
-            meeting["id"] = self._get_id(meeting)
-
-            yield meeting
-
-    def _parse_time_notes(self, item):
-        meeting_start = self._parse_time(item, "start")
-        return (
-            self.time_notes
-            if meeting_start and meeting_start > datetime.datetime.now()
-            else ""
+    def _parse_meeting(self, item):
+        title_text = item.css(".page-title ::text").get("")
+        start, end = self._parse_time(item)
+        meeting = Meeting(
+            title=self._parse_title(title_text),
+            description=self._parse_description(item),
+            classification=COMMITTEE,
+            start=start,
+            end=end,
+            all_day=False,
+            time_notes="",
+            location=self._parse_location(item),
+            links=self._parse_links(item),
+            source=item.url,
         )
 
-    def _parse_location(self, item):
-        location_text = (
-            item.css("li i.icon-map-marker2").xpath("following-sibling::text()").get()
-        )
+        meeting["status"] = self._get_status(meeting, title_text)
+        meeting["id"] = self._get_id(meeting)
 
-        if not location_text:
-            return {"name": None, "address": None}
+        yield meeting
 
-        if " at " in location_text:
-            address, name = location_text.split(" at ", 1)
-
-            return {
-                "name": name.strip(),
-                "address": address.strip(),
-            }
-
-        return {"name": None, "address": location_text.strip()}
-
-    def _get_status(self, item, meeting, text=""):
-        title_div = item.css(".entry-title a::text").get()
-        if title_div and re.search(r"cancel\w+|rescheduled", title_div, re.IGNORECASE):
-            return CANCELLED
-        return super()._get_status(meeting, text)
-
-    def _parse_title(self, item):
-        title_div = item.css(".entry-title a::text").get()
-        if not title_div:
+    def _parse_title(self, title_text):
+        if not title_text:
             return ""
-        title = title_div.replace("\u2013", "-").split(" - ")[0].strip()
+        title = title_text.replace("\u2013", "-").split(" - ")[0].strip()
         title = [
             word.capitalize() if word != "CRGC" else word for word in title.split()
         ]
         return " ".join(title)
 
-    def _parse_time(self, item, flag):
+    def _parse_description(self, item):
+        desc_text = item.css("div.copy.copy-2.flow.default-content p::text").get()
+        if desc_text:
+            return desc_text.strip()
+        return ""
+
+    def _clean_text(self, selector, css):
+        return (
+            " ".join(t.strip() for t in selector.css(css).getall())
+            .replace("\n", "")
+            .strip()
+        )
+
+    def _parse_time(self, item):
         try:
-            date_text = (
-                item.css("li i.icon-calendar").xpath("following-sibling::text()").get()
-            )
-            time_text = (
-                item.css("li i.icon-time").xpath("following-sibling::text()").get()
-            )
+            date_text = self._clean_text(item, "p.meeting__date ::text")
+            time_text = self._clean_text(item, "p.meeting__time ::text")
 
-            start_time = time_text.split("-")[0].strip()
-            end_time = time_text.split("-")[1].strip()
+            if not time_text:
+                return dateparser.parse(f"{date_text}"), None
 
-            date_str = re.search(r"^(.*\d{4})", date_text.strip()).group(1)
+            end_time = None
+            start_time = time_text.strip()
 
-            start_dt = datetime.datetime.strptime(
-                f"{date_str} {start_time}", "%b %d, %Y %I:%M %p"
-            )
-            end_dt = datetime.datetime.strptime(
-                f"{date_str} {end_time}", "%b %d, %Y %I:%M %p"
-            )
-            return start_dt if flag == "start" else end_dt
-        except Exception:
-            return None
+            if "-" in time_text or "to" in time_text:
+                time_text = re.split(r"\s*[-to]+\s*", time_text)
+                start_time = time_text[0].strip()
+                end_time = time_text[1].strip()
+
+            start_dt_obj = dateparser.parse(f"{date_text} {start_time}")
+            end_dt_obj = None
+            if end_time:
+                end_dt_obj = dateparser.parse(f"{date_text} {end_time}")
+
+            return start_dt_obj, end_dt_obj
+        except Exception as e:
+            self.logger.warning(f"Error parsing time: {e}")
+            return None, None
+
+    def _parse_location(self, item):
+        location_text = self._clean_text(item, "p.meeting__location ::text")
+        if not location_text:
+            return {"name": "", "address": ""}
+
+        # Pattern 1: "In person location: Name, Address"
+        # Example: "In person location: Elk Ridge Golf Course,
+        # 1 St. Martin's Springs Rd, Carson, Washington"
+        pattern1 = r"In person location:\s*([^,]+),\s*(.+)"
+        match = re.search(pattern1, location_text, re.IGNORECASE)
+
+        if match:
+            return {
+                "name": match.group(1).strip(),
+                "address": match.group(2).strip(),
+            }
+
+        # Pattern 2: "City, State at Venue and via zoom"
+        # Example: "Cascade Locks, OR at the Gorge Pavilion and via zoom"
+        pattern2 = r"(.+?)\s+at\s+(.+)"
+        match = re.search(pattern2, location_text, re.IGNORECASE)
+
+        if match:
+            return {
+                "name": match.group(2).strip(),
+                "address": match.group(1).strip(),
+            }
+
+        return {"name": "", "address": ""}
 
     def _parse_links(self, item):
-        links = item.css("a")[1:]
-        if links:
-            link_list = []
-            for link in links:
-                href = link.attrib.get("href")
-                title_text = link.css("::text").get()
-                if title_text and href:
-                    title = title_text.strip()
-                    link_list.append({"href": f"{self.base_url}{href}", "title": title})
-            return link_list
-        return []
+        links = []
+        links_div = item.css(".meeting__agenda a, .meeting__files a")
+        for link in links_div:
+            attachment = {
+                "href": link.attrib.get("href"),
+                "title": link.css("span::text").get("").strip(),
+            }
+            if attachment["href"]:
+                links.append(attachment)
+        return links

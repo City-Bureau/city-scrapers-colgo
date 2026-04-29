@@ -16,14 +16,6 @@ class ColgoColumbiaCommissionSpider(CityScrapersSpider):
         "FEED_EXPORT_ENCODING": "utf-8",
     }
 
-    """
-    Location details are not provided on the website.
-    """
-    location = {
-        "name": "",
-        "address": "",
-    }
-
     start_urls = [
         "https://gorgecommission.org/home/past/",
         "https://gorgecommission.org/home/meetings/",

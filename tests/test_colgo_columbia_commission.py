@@ -2,7 +2,7 @@ from datetime import datetime
 from os.path import dirname, join
 
 import pytest
-from city_scrapers_core.constants import COMMITTEE, PASSED
+from city_scrapers_core.constants import COMMITTEE, TENTATIVE
 from city_scrapers_core.utils import file_response
 from freezegun import freeze_time
 
@@ -34,7 +34,8 @@ def request_items(spider):
 
 @pytest.fixture
 def parsed_item(spider):
-    return next(spider._parse_meeting(sample_meeting_details))
+    with freeze_time("2026-04-08"):
+        return next(spider._parse_meeting(sample_meeting_details))
 
 
 def test_count(request_items):
@@ -75,7 +76,7 @@ def test_id(parsed_item):
 
 
 def test_status(parsed_item):
-    assert parsed_item["status"] == PASSED
+    assert parsed_item["status"] == TENTATIVE
 
 
 def test_location(parsed_item):

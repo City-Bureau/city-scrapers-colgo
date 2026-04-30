@@ -4,7 +4,6 @@ from city_scrapers_core.constants import COMMITTEE
 from city_scrapers_core.items import Meeting
 from city_scrapers_core.spiders import CityScrapersSpider
 from dateutil import parser as dateparser
-from unidecode import unidecode
 
 
 class ColgoColumbiaCommissionSpider(CityScrapersSpider):
@@ -14,14 +13,7 @@ class ColgoColumbiaCommissionSpider(CityScrapersSpider):
 
     custom_settings = {
         "ROBOTSTXT_OBEY": False,
-    }
-
-    """
-    Location details are not provided on the website.
-    """
-    location = {
-        "name": "",
-        "address": "",
+        "FEED_EXPORT_ENCODING": "utf-8",
     }
 
     start_urls = [
@@ -45,7 +37,7 @@ class ColgoColumbiaCommissionSpider(CityScrapersSpider):
             end=end,
             all_day=False,
             time_notes="",
-            location=self.location,
+            location=self._parse_location(item),
             links=self._parse_links(item),
             source=item.url,
         )
@@ -65,15 +57,14 @@ class ColgoColumbiaCommissionSpider(CityScrapersSpider):
         return " ".join(title)
 
     def _parse_description(self, item):
-        desc_div = item.css("div.copy.copy-2.flow.default-content p::text").get()
-        if desc_div:
-            normalized_desc = unidecode(desc_div).strip()
-            return normalized_desc
+        desc_text = item.css("div.copy.copy-2.flow.default-content p::text").get()
+        if desc_text:
+            return desc_text.strip()
         return ""
 
     def _clean_text(self, selector, css):
         return (
-            "".join(t.strip() for t in selector.css(css).getall())
+            " ".join(t.strip() for t in selector.css(css).getall())
             .replace("\n", "")
             .strip()
         )
@@ -94,16 +85,45 @@ class ColgoColumbiaCommissionSpider(CityScrapersSpider):
                 start_time = time_text[0].strip()
                 end_time = time_text[1].strip()
 
-            start_dt_str = f"{date_text} {start_time}"
-            end_dt_str = f"{date_text} {end_time}" if end_time else f"{date_text}"
-
-            start_dt_obj = dateparser.parse(start_dt_str)
-            end_dt_obj = dateparser.parse(end_dt_str)
+            start_dt_obj = dateparser.parse(f"{date_text} {start_time}")
+            end_dt_obj = None
+            if end_time:
+                end_dt_obj = dateparser.parse(f"{date_text} {end_time}")
 
             return start_dt_obj, end_dt_obj
         except Exception as e:
             self.logger.warning(f"Error parsing time: {e}")
             return None, None
+
+    def _parse_location(self, item):
+        location_text = self._clean_text(item, "p.meeting__location ::text")
+        if not location_text:
+            return {"name": "", "address": ""}
+
+        # Pattern 1: "In person location: Name, Address"
+        # Example: "In person location: Elk Ridge Golf Course,
+        # 1 St. Martin's Springs Rd, Carson, Washington"
+        pattern1 = r"In person location:\s*([^,]+),\s*(.+)"
+        match = re.search(pattern1, location_text, re.IGNORECASE)
+
+        if match:
+            return {
+                "name": match.group(1).strip(),
+                "address": match.group(2).strip(),
+            }
+
+        # Pattern 2: "City, State at Venue and via zoom"
+        # Example: "Cascade Locks, OR at the Gorge Pavilion and via zoom"
+        pattern2 = r"(.+?)\s+at\s+(.+)"
+        match = re.search(pattern2, location_text, re.IGNORECASE)
+
+        if match:
+            return {
+                "name": match.group(2).strip(),
+                "address": match.group(1).strip(),
+            }
+
+        return {"name": "", "address": ""}
 
     def _parse_links(self, item):
         links = []

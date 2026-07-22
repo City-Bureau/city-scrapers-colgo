@@ -12,7 +12,7 @@ SkamaniaBoccSpider = colgo_skamania.SkamaniaBoccSpider
 
 test_response = file_response(
     join(dirname(__file__), "files", "skamania_county_bocc.html"),
-    url="https://www.skamaniacounty.org/departments-offices/commissioners/agendas-minutes-meeting-audio/-folder-746#docfold_2924_1241_328_746",  # noqa
+    url="https://www.skamaniacounty.gov/departments-offices/commissioners/agendas-minutes-meeting-audio/-folder-746#docfold_2924_1241_328_746",  # noqa
 )
 spider = SkamaniaBoccSpider()
 
@@ -72,14 +72,14 @@ def test_location():
 def test_source():
     assert (
         parsed_items[0]["source"]
-        == "https://www.skamaniacounty.org/departments-offices/commissioners"
+        == "https://www.skamaniacounty.gov/departments-offices/commissioners"
     )
 
 
 def test_links():
     assert parsed_items[0]["links"] == [
         {
-            "href": "https://www.skamaniacounty.org/home/showpublisheddocument/17384",
+            "href": "https://www.skamaniacounty.gov/home/showpublisheddocument/17384",
             "title": "Agenda",
         }
     ]

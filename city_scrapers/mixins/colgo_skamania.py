@@ -45,29 +45,18 @@ class SkamaniaCountyMixin(CityScrapersSpider, metaclass=SkamaniaCountyMixinMeta)
 
     custom_settings = {
         "ROBOTSTXT_OBEY": False,
+        "TWISTED_REACTOR": "twisted.internet.asyncioreactor.AsyncioSelectorReactor",
+        "USER_AGENT": None,
+        "DOWNLOAD_HANDLERS": {
+            "http": "scrapy_impersonate.ImpersonateDownloadHandler",
+            "https": "scrapy_impersonate.ImpersonateDownloadHandler",
+        },
     }
-    main_url = "https://www.skamaniacounty.org/departments-offices/commissioners"
+
+    main_url = "https://www.skamaniacounty.gov/departments-offices/commissioners"
 
     _seen_dates = set()
     _folder_year = None
-
-    def _get_headers(self):
-        """Return the request headers."""
-        return {
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",  # noqa
-            "Accept-Encoding": "gzip, deflate, br, zstd",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Priority": "u=0, i",
-            "Sec-Ch-Ua": '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',  # noqa
-            "Sec-Ch-Ua-Mobile": "?1",
-            "Sec-Ch-Ua-Platform": '"Android"',
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            "Sec-Fetch-User": "?1",
-            "Upgrade-Insecure-Requests": "1",
-            "User-Agent": "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Mobile Safari/537.36",  # noqa
-        }
 
     def start_requests(self):
         self._seen_dates = set()
@@ -75,7 +64,7 @@ class SkamaniaCountyMixin(CityScrapersSpider, metaclass=SkamaniaCountyMixinMeta)
         yield scrapy.Request(
             f"{self.main_url}/{self.agenda_param}",
             callback=self.parse,
-            headers=self._get_headers(),
+            meta={"impersonate": "chrome131"},
         )
 
     def parse(self, response):
@@ -91,7 +80,7 @@ class SkamaniaCountyMixin(CityScrapersSpider, metaclass=SkamaniaCountyMixinMeta)
                 yield response.follow(
                     href,
                     callback=self.parse,
-                    headers=self._get_headers(),
+                    meta={"impersonate": "chrome131"},
                 )
             else:
                 dates = self._extract_dates(text)

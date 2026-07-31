@@ -9,6 +9,7 @@ from freezegun import freeze_time
 from city_scrapers.spiders import colgo_skamania
 
 SkamaniaBoccSpider = colgo_skamania.SkamaniaBoccSpider
+SkamaniaCountyMixin = colgo_skamania.SkamaniaCountyMixin
 
 test_response = file_response(
     join(dirname(__file__), "files", "skamania_county_bocc.html"),
@@ -24,6 +25,27 @@ parsed_items = [item for item in spider.parse(test_response)]
 freezer.stop()
 
 
+def test_start_requests_impersonate():
+    spider = SkamaniaBoccSpider()
+    requests = list(spider.start_requests())
+    assert len(requests) == 1
+    req = requests[0]
+    assert req.meta.get("impersonate") == "chrome131"
+    assert req.url == f"{spider.main_url}/{spider.agenda_param}"
+    assert (
+        SkamaniaCountyMixin.custom_settings["DOWNLOAD_HANDLERS"]["http"]
+        == "scrapy_impersonate.ImpersonateDownloadHandler"
+    )
+    assert (
+        SkamaniaCountyMixin.custom_settings["DOWNLOAD_HANDLERS"]["https"]
+        == "scrapy_impersonate.ImpersonateDownloadHandler"
+    )
+    assert (
+        SkamaniaCountyMixin.custom_settings["TWISTED_REACTOR"]
+        == "twisted.internet.asyncioreactor.AsyncioSelectorReactor"
+    )
+
+
 def test_title():
     assert parsed_items[0]["title"] == "Board of County Commissioners"
 
@@ -33,7 +55,7 @@ def test_description():
 
 
 def test_start():
-    assert parsed_items[0]["start"] == datetime(2026, 1, 13, 9, 30)
+    assert parsed_items[0]["start"] == datetime(2026, 1, 27, 9, 30)
 
 
 def test_end():
@@ -54,7 +76,7 @@ def test_time_notes():
 def test_id():
     assert (
         parsed_items[0]["id"]
-        == "colgo_ska_bocc/202601130930/x/board_of_county_commissioners"
+        == "colgo_ska_bocc/202601270930/x/board_of_county_commissioners"
     )
 
 
@@ -79,7 +101,7 @@ def test_source():
 def test_links():
     assert parsed_items[0]["links"] == [
         {
-            "href": "https://www.skamaniacounty.gov/home/showpublisheddocument/17384",
+            "href": "https://www.skamaniacounty.gov/home/showpublisheddocument/17452/639050307619370000",  # noqa
             "title": "Agenda",
         }
     ]

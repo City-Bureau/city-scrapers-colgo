@@ -1062,8 +1062,18 @@ class ColgoHoodRiverCityMixin(
                 if "cancelled" in event_text or "canceled" in event_text:
                     return CANCELLED
 
-        # Fall back to default date-based status
-        return super()._get_status(meeting)
+        # The core helper treats "rescheduled" anywhere in the title as
+        # cancelled. On this calendar a "Rescheduled from <date>" or
+        # "Originally Scheduled for <date>" title marks the new, active
+        # meeting (the old date is a separate cancelled event), so strip
+        # those phrases before falling back to the date-based status.
+        title = re.sub(
+            r"\b(rescheduled|moved)\s+from\b|\boriginally\s+scheduled\b",
+            "",
+            meeting.get("title", ""),
+            flags=re.IGNORECASE,
+        )
+        return super()._get_status({**dict(meeting), "title": title})
 
     def _combine_date_time(self, date_str, time_str):
         """Combine date and time strings into datetime."""

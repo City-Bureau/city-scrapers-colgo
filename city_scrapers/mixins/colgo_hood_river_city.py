@@ -24,7 +24,19 @@ from city_scrapers_core.constants import (
 )
 from city_scrapers_core.items import Meeting
 from city_scrapers_core.spiders import CityScrapersSpider
-from scrapy import FormRequest
+from scrapy import FormRequest, Selector, signals
+from scrapy.exceptions import DontCloseSpider
+from twisted.python.failure import Failure
+
+OMP_SESSIONS_URL = (
+    "https://cityofhoodriver.ompnetwork.org/api-cache/"
+    "site/1713/sessions?start={start}&limit={limit}"
+)
+VIDEO_PAGE_SIZE = 100
+
+
+class HoodRiverCalendarError(Exception):
+    """The EventON calendar could not be read, so meetings would be missed."""
 
 
 class ColgoHoodRiverCityMixinMeta(type):
@@ -84,73 +96,97 @@ class ColgoHoodRiverCityMixin(
         "Mayor's Equity Advisory Group": ADVISORY_COMMITTEE,
     }
 
+    @classmethod
+    def from_crawler(cls, crawler, *args, **kwargs):
+        spider = super().from_crawler(crawler, *args, **kwargs)
+        crawler.signals.connect(spider._on_spider_idle, signal=signals.spider_idle)
+        crawler.signals.connect(spider._on_spider_closed, signal=signals.spider_closed)
+        return spider
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.all_video_sessions = []
+        self.video_cache = {}
+        self._video_pages_pending = 0
+        self._calendar_requested = False
+        self._calendar_responses = 0
+        self._calendar_failures = 0
+        self._calendar_events = 0
+
     def start_requests(self):
-        """Generate POST requests to EventON API for multiple year ranges."""
-        # First, fetch video data from OMP Network API
-        video_api_url = (
-            "https://cityofhoodriver.ompnetwork.org/api-cache/"
-            "site/1713/sessions?start=0&limit=100"
-        )
-        yield scrapy.Request(
-            url=video_api_url,
-            callback=self._parse_videos_first_page,
+        """
+        Fetch the OMP Network video index, then the EventON calendar.
+
+        Videos only add "Video Recording" links, so the calendar must be fetched
+        however the video API behaves. Every video page request has an errback,
+        and each page (parsed, unreadable or failed) decrements a counter; the
+        calendar is requested when it reaches zero. If a video request is lost
+        without reaching either callback, the spider_idle handler requests the
+        calendar instead.
+        """
+        yield self._video_request(start=0)
+
+    def _video_request(self, start):
+        self._video_pages_pending += 1
+        return scrapy.Request(
+            url=OMP_SESSIONS_URL.format(start=start, limit=VIDEO_PAGE_SIZE),
+            callback=self._parse_video_page,
+            errback=self._video_page_failed,
             dont_filter=True,
+            meta={"video_start": start},
         )
 
-    def _parse_videos_first_page(self, response):
-        """Parse first page of videos and fetch remaining pages."""
+    def _parse_video_page(self, response):
+        """Collect one page of video sessions; the first page queues the rest."""
         try:
             data = response.json()
-            total_size = int(data.get("totalSize", 0))
-            limit = 100
+            results = data.get("results") or []
+            total_size = int(data.get("totalSize") or 0)
+        except (AttributeError, TypeError, ValueError) as e:
+            self.logger.warning(
+                f"OMP video page {response.meta.get('video_start')} unreadable "
+                f"({e.__class__.__name__}); continuing without those videos"
+            )
+            results, total_size = [], 0
 
-            # Initialize video cache with first page
-            if not hasattr(self, "all_video_sessions"):
-                self.all_video_sessions = []
+        self.all_video_sessions.extend(results)
 
-            self.all_video_sessions.extend(data.get("results", []))
+        if response.meta.get("video_start") == 0:
+            for start in range(VIDEO_PAGE_SIZE, total_size, VIDEO_PAGE_SIZE):
+                yield self._video_request(start)
 
-            # Fetch remaining pages
-            start = limit
-            while start < total_size:
-                video_api_url = (
-                    "https://cityofhoodriver.ompnetwork.org/api-cache/"
-                    f"site/1713/sessions?start={start}&limit={limit}"
-                )
-                yield scrapy.Request(
-                    url=video_api_url,
-                    callback=self._parse_videos_additional_page,
-                    dont_filter=True,
-                    meta={"start": start, "total_size": total_size},
-                )
-                start += limit
+        yield from self._video_page_done()
 
-            # If only one page, process immediately
-            if total_size <= limit:
-                yield from self._process_all_videos_and_fetch_events()
+    def _video_page_failed(self, failure):
+        self.logger.warning(
+            f"OMP video request failed ({failure.value!r}); "
+            "continuing without those videos"
+        )
+        yield from self._video_page_done()
 
-        except Exception as e:
-            self.logger.error(f"Error parsing first video page: {e}")
-            self.all_video_sessions = []
-            yield from self._process_all_videos_and_fetch_events()
+    def _video_page_done(self):
+        self._video_pages_pending -= 1
+        if self._video_pages_pending <= 0:
+            yield from self._fetch_calendar()
 
-    def _parse_videos_additional_page(self, response):
-        """Parse additional pages of videos."""
-        try:
-            data = response.json()
-            total_size = response.meta.get("total_size", 0)
+    def _on_spider_idle(self, spider):
+        requests = list(self._on_spider_idle_requests())
+        for request in requests:
+            self.crawler.engine.crawl(request)
+        if requests:
+            raise DontCloseSpider
 
-            self.all_video_sessions.extend(data.get("results", []))
+    def _on_spider_idle_requests(self):
+        """Safety net: the spider went idle before the calendar was requested."""
+        if not self._calendar_requested:
+            self.logger.warning(
+                f"{self._video_pages_pending} OMP video page(s) never completed; "
+                "fetching the calendar anyway"
+            )
+            yield from self._fetch_calendar()
 
-            # Check if this is the last page
-            if len(self.all_video_sessions) >= total_size:
-                yield from self._process_all_videos_and_fetch_events()
-
-        except Exception as e:
-            self.logger.error(f"Error parsing additional video page: {e}")
-
-    def _process_all_videos_and_fetch_events(self):
-        """Process all collected videos and then fetch events."""
+    def _build_video_cache(self):
+        """Index collected video sessions by date and simplified title."""
         videos = {}
 
         try:
@@ -182,17 +218,21 @@ class ColgoHoodRiverCityMixin(
                         key = f"{date_key}_{self._simplify_title(title)}"
                         videos[key] = video_info
 
-            # Store in spider instance for later matching
-            self.video_cache = videos
-
         except Exception as e:
-            self.logger.error(f"Error processing videos: {e}")
-            self.video_cache = {}
+            self.logger.warning(f"Error processing videos: {e}")
+            videos = {}
 
-        # Now fetch events from EventON API
+        return videos
+
+    def _fetch_calendar(self):
+        """Request each year of the EventON calendar (once per run)."""
+        if self._calendar_requested:
+            return
+        self._calendar_requested = True
+        self.video_cache = self._build_video_cache()
+
         api_url = "https://cityofhoodriver.gov/?evo-ajax=eventon_get_events"
-        now = datetime.now()
-        current_year = now.year
+        current_year = datetime.now().year
 
         # Fetch meetings from 2019 to 1 year in the future
         for year in range(2019, current_year + 2):
@@ -201,11 +241,53 @@ class ColgoHoodRiverCityMixin(
                 url=api_url,
                 formdata=form_data,
                 callback=self.parse,
+                errback=self._calendar_failed,
                 headers={
                     "Referer": "https://cityofhoodriver.gov/administration/meetings/"
                 },
                 meta={"year": year},
             )
+
+    def _calendar_failed(self, failure):
+        """
+        A calendar year that could not be downloaded is lost data. Raising here
+        routes the error through Scrapy's spider_error signal (and so to Sentry).
+        """
+        self._calendar_failures += 1
+        year = failure.request.meta.get("year")
+        raise HoodRiverCalendarError(
+            f"{self.name}: EventON request for {year} failed: {failure.value!r}"
+        )
+
+    def _on_spider_closed(self, spider, reason):
+        """Fail loudly when a finished run parsed no calendar events at all."""
+        if reason != "finished" or self._calendar_events > 0:
+            return
+        self._report_error(
+            HoodRiverCalendarError(
+                f"{self.name}: run finished with 0 EventON events "
+                f"(calendar requested={self._calendar_requested}, "
+                f"responses parsed={self._calendar_responses}, "
+                f"requests failed={self._calendar_failures})"
+            )
+        )
+
+    def _report_error(self, exc):
+        """
+        Report an error outside a callback the way Scrapy reports callback
+        errors: ERROR log, spider_exceptions stat, and the spider_error signal
+        that scrapy_sentry_errors.extensions.Errors forwards to Sentry.
+        """
+        self.logger.error(str(exc))
+        self.crawler.stats.inc_value(
+            f"spider_exceptions/{exc.__class__.__name__}", spider=self
+        )
+        self.crawler.signals.send_catch_log(
+            signal=signals.spider_error,
+            failure=Failure(exc),
+            response=None,
+            spider=self,
+        )
 
     def _simplify_title(self, title):
         """Simplify title for matching by removing common variations."""
@@ -259,46 +341,55 @@ class ColgoHoodRiverCityMixin(
 
     def parse(self, response):
         """
-        Parse the EventON API JSON response.
+        Parse one year of the EventON API JSON response.
+
+        A response that is not JSON or carries no calendar HTML raises
+        HoodRiverCalendarError, which Scrapy logs and sends to Sentry. A year
+        with no events is normal: EventON returns a "no_events" placeholder.
         """
+        self._calendar_responses += 1
+        year = response.meta.get("year")
         try:
             data = response.json()
-        except ValueError:
-            self.logger.error(
-                f"Failed to parse JSON response. "
-                f"Status: {response.status}, Body: {response.text[:200]}"
+        except (AttributeError, ValueError):
+            raise HoodRiverCalendarError(
+                f"{self.name}: EventON response for {year} is not JSON "
+                f"(status {response.status}, "
+                f"Content-Type {response.headers.get('Content-Type')!r}, "
+                f"{len(response.body)} bytes)"
             )
-            return
 
-        # Get HTML content from the response
-        # The HTML is in data["html"][cal_id] where cal_id is the calendar ID
-        html_content = None
-        cal_id = "evcal_calendar_765"
-
-        if "html" in data:
-            if isinstance(data["html"], str):
-                html_content = data["html"]
-            elif isinstance(data["html"], dict):
-                # Try to get HTML by calendar ID
-                if cal_id in data["html"]:
-                    html_content = data["html"][cal_id]
-                else:
-                    # Get first non-empty HTML value
-                    for key, value in data["html"].items():
-                        if isinstance(value, str) and value and key != "no_events":
-                            html_content = value
-                            break
-
+        html_content = self._extract_calendar_html(data)
         if not html_content:
-            self.logger.warning(
-                f"No HTML content found. html keys: {list(data.get('html', {}).keys())}"
+            keys = list(data.keys()) if isinstance(data, dict) else type(data).__name__
+            raise HoodRiverCalendarError(
+                f"{self.name}: EventON response for {year} has no calendar HTML "
+                f"(status {response.status}, keys {keys})"
             )
-            return
-
-        from scrapy import Selector
 
         selector = Selector(text=html_content)
+        self._calendar_events += len(selector.css("[data-event_id]"))
         yield from self._parse_events(selector, response)
+
+    def _extract_calendar_html(self, data):
+        """
+        The HTML is in data["html"], either a string or a dict keyed by
+        calendar ID.
+        """
+        if not isinstance(data, dict):
+            return None
+        html = data.get("html")
+        if isinstance(html, str):
+            return html
+        if isinstance(html, dict):
+            cal_id = "evcal_calendar_765"
+            if html.get(cal_id):
+                return html[cal_id]
+            # Get first non-empty HTML value
+            for key, value in html.items():
+                if isinstance(value, str) and value and key != "no_events":
+                    return value
+        return None
 
     def _parse_events(self, selector, response):
         """Parse events from the HTML content and validate links asynchronously."""

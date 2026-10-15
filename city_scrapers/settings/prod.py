@@ -15,6 +15,7 @@ SENTRY_DSN = os.getenv("SENTRY_DSN")
 EXTENSIONS = {
     "city_scrapers_core.extensions.AzureBlobStatusExtension": 100,
     "scrapy_sentry_errors.extensions.Errors": 10,
+    "city_scrapers.extensions.StatsLine": 900,
     "scrapy.extensions.closespider.CloseSpider": None,
 }
 

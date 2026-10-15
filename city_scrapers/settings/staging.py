@@ -5,10 +5,15 @@ from .base import *  # noqa
 USER_AGENT = "City Scrapers [staging mode]. Learn more and say hello at https://citybureau.org/city-scrapers"  # noqa
 
 ITEM_PIPELINES = {
-    "city_scrapers_core.pipelines.AzureDiffPipeline": 200,
+    "city_scrapers.pipelines.GuardedAzureDiffPipeline": 200,
     "city_scrapers_core.pipelines.MeetingPipeline": 300,
     "city_scrapers_core.pipelines.OpenCivicDataPipeline": 400,
 }
+
+# Skip cancel-marking when a run looks broken (see city_scrapers/pipelines.py)
+CITY_SCRAPERS_DIFF_GUARD_ENABLED = True
+CITY_SCRAPERS_DIFF_GUARD_MIN_RATIO = 0.5
+CITY_SCRAPERS_DIFF_GUARD_MIN_PREVIOUS = 3
 
 SENTRY_DSN = os.getenv("SENTRY_DSN")
 

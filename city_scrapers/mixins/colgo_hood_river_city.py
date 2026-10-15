@@ -298,9 +298,45 @@ class ColgoHoodRiverCityMixin(
         from scrapy import Selector
 
         selector = Selector(text=html_content)
-        yield from self._parse_events(selector, response)
+        yield from self._parse_events(
+            selector, response, self._build_status_map(data.get("json"))
+        )
 
-    def _parse_events(self, selector, response):
+    def _build_status_map(self, events_json):
+        """Map (event_id, repeat index) to EventON's own event status.
+
+        The response's "json" entries carry each event's structured status
+        (event_pmv._status: scheduled, cancelled, rescheduled, ...), which is
+        what the calendar itself displays.
+        """
+        status_map = {}
+        if isinstance(events_json, dict):
+            events_json = list(events_json.values())
+        if not isinstance(events_json, list):
+            return status_map
+        for entry in events_json:
+            if not isinstance(entry, dict):
+                continue
+            status = (entry.get("event_pmv") or {}).get("_status")
+            if isinstance(status, list):
+                status = status[0] if status else None
+            if entry.get("event_id") is None or not status:
+                continue
+            key = (str(entry["event_id"]), str(entry.get("ri") or "0"))
+            status_map[key] = str(status).lower()
+        return status_map
+
+    def _lookup_event_status(self, event, status_map):
+        """Return EventON's status for an event element, or None if unknown."""
+        if not status_map or event is None:
+            return None
+        event_id = event.attrib.get("data-event_id")
+        if not event_id:
+            return None
+        ri = re.sub(r"\D", "", event.attrib.get("data-ri", "")) or "0"
+        return status_map.get((event_id, ri))
+
+    def _parse_events(self, selector, response, status_map=None):
         """Parse events from the HTML content and validate links asynchronously."""
         for event in selector.css(
             ".eventon_list_event, .evo_eventcard, [data-event_id]"
@@ -339,7 +375,9 @@ class ColgoHoodRiverCityMixin(
 
             # Add video link
             meeting["links"] = self._add_video_link(meeting, meeting["links"])
-            meeting["status"] = self._get_status(meeting, event)
+            meeting["status"] = self._get_status(
+                meeting, event, self._lookup_event_status(event, status_map)
+            )
             meeting["id"] = self._get_id(meeting)
 
             if response.meta.get("skip_link_validation"):
@@ -1029,20 +1067,37 @@ class ColgoHoodRiverCityMixin(
         """Parse or generate source."""
         return "https://cityofhoodriver.gov/administration/meetings/"
 
-    def _get_status(self, meeting, event=None):
+    # EventON statuses meaning the meeting will not happen at this date/time.
+    # "rescheduled" marks the new, active meeting, so it is not in this set.
+    EVENTON_CANCELLED_STATUSES = {"cancelled", "canceled", "postponed"}
+
+    def _get_status(self, meeting, event=None, evo_status=None):
         """
-        Get meeting status, detecting cancelled meetings from EventON HTML.
+        Get meeting status, preferring EventON's own structured status.
 
         Args:
             meeting: Meeting dict with parsed data
             event: Scrapy selector for the event HTML element (optional)
+            evo_status: EventON event_pmv._status for this event (optional)
 
         Returns:
             str: Status constant (CANCELLED, PASSED, or TENTATIVE)
         """
-        from city_scrapers_core.constants import CANCELLED
+        from city_scrapers_core.constants import CANCELLED, PASSED, TENTATIVE
 
-        # Check for cancellation indicators in EventON HTML
+        # The calendar's structured status is the source of truth. When it is
+        # present, don't second-guess it from page text: words like
+        # "cancelled" or "rescheduled" in titles, notes or surrounding markup
+        # have produced false cancellations.
+        if evo_status:
+            if evo_status in self.EVENTON_CANCELLED_STATUSES:
+                return CANCELLED
+            if meeting["start"] < datetime.now():
+                return PASSED
+            return TENTATIVE
+
+        # Fallback when the response has no structured status: check
+        # cancellation indicators in the EventON HTML
         if event is not None:
             # Check for "cancelled" in CSS classes
             event_classes = event.attrib.get("class", "").lower()

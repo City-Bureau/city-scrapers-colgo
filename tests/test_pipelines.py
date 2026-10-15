@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import date, datetime
 
 import pytest
 import sentry_sdk
@@ -16,7 +16,11 @@ from scrapy.statscollectors import MemoryStatsCollector
 from scrapy_sentry_errors.extensions import Errors
 from sentry_sdk.transport import Transport
 
-from city_scrapers.pipelines import DiffGuardTripped, GuardedDiffPipeline
+from city_scrapers.pipelines import (
+    DiffGuardMixin,
+    DiffGuardTripped,
+    GuardedDiffPipeline,
+)
 
 NOW = "2026-10-14 14:51:00"
 SPIDER_NAME = "colgo_test_spider"
@@ -52,6 +56,10 @@ class FakeScraper:
 
 class FakeEngine:
     scraper = None
+    idle = True
+
+    def spider_is_idle(self):
+        return self.idle
 
 
 class FakeCrawler:
@@ -129,9 +137,20 @@ def run_pipeline(previous_feed, scraped, settings=None, pipeline_cls=None):
         except DropItem:
             pass
     crawler.engine.scraper = FakeScraper(pipeline, outputs)
-    with pytest.raises(DontCloseSpider):
-        pipeline.spider_idle(spider)
+    idle_until_injected(pipeline, outputs)
     return outputs, pipeline, errors
+
+
+def idle_until_injected(pipeline, outputs):
+    if isinstance(pipeline, DiffGuardMixin):
+        # The first idle call only waits, in case another spider_idle receiver
+        # schedules more requests in the same pass
+        before = list(outputs)
+        with pytest.raises(DontCloseSpider):
+            pipeline.spider_idle(pipeline.crawler.spider)
+        assert outputs == before
+    with pytest.raises(DontCloseSpider):
+        pipeline.spider_idle(pipeline.crawler.spider)
 
 
 def previous_outputs(outputs):
@@ -248,14 +267,84 @@ def test_duplicate_scraped_items_counted_once():
 @freeze_time(NOW)
 def test_sharp_drop_ignored_below_min_previous():
     # Only 2 upcoming meetings in the previous feed, under the minimum of 3, and the
-    # run did scrape something, so the missing meetings are cancelled as before
-    scraped = [meeting("p1", datetime(2026, 9, 17, 17, 30))]
+    # run scraped one of them, so the other is cancelled as before
+    scraped = [
+        meeting("u1", datetime(2026, 10, 15, 17, 30)),
+        meeting("p1", datetime(2026, 9, 17, 17, 30)),
+    ]
     outputs, pipeline, errors = run_pipeline(UPCOMING[:2] + PAST, scraped)
     assert not pipeline.guard_tripped
     assert errors == []
     assert {k: v["status"] for k, v in previous_outputs(outputs).items()} == {
-        "ocd-event/u1": CANCELLED,
         "ocd-event/u2": CANCELLED,
+    }
+
+
+@freeze_time(NOW)
+def test_zero_upcoming_trips_below_min_previous():
+    # Small agency: one upcoming meeting before, only past meetings scraped now
+    scraped = [meeting("p1", datetime(2026, 9, 17, 17, 30))]
+    outputs, pipeline, errors = run_pipeline(UPCOMING[:1] + PAST, scraped)
+    assert pipeline.guard_tripped
+    assert len(errors) == 1
+    assert "scraped zero upcoming meetings" in str(errors[0].value)
+    assert previous_outputs(outputs) == {p["_id"]: p for p in UPCOMING[:1] + PAST[1:]}
+
+
+@freeze_time(NOW)
+def test_zero_upcoming_with_no_previous_upcoming_does_not_trip():
+    scraped = [meeting("p1", datetime(2026, 9, 17, 17, 30))]
+    outputs, pipeline, errors = run_pipeline(PAST, scraped)
+    assert not pipeline.guard_tripped
+    assert errors == []
+    # Missing past meeting dropped as before
+    assert previous_outputs(outputs) == {}
+
+
+@freeze_time(NOW)
+def test_date_and_string_starts_are_counted_without_losing_items():
+    scraped = [
+        {"id": f"{SPIDER_NAME}/u1", "start": date(2026, 10, 15)},
+        {"id": f"{SPIDER_NAME}/u2", "start": "2026-11-19T17:30:00"},
+        {"id": f"{SPIDER_NAME}/x", "start": object()},
+        {"id": f"{SPIDER_NAME}/y"},
+    ]
+    outputs, pipeline, _ = run_pipeline([], scraped)
+    assert [o["id"] for o in outputs] == [s["id"] for s in scraped]
+    assert pipeline.scraped_upcoming_count == 2
+
+
+@freeze_time(NOW)
+def test_waits_while_engine_busy_or_activity_since_last_idle():
+    crawler = FakeCrawler(UPCOMING)
+    pipeline = InMemoryGuardedDiffPipeline.from_crawler(crawler)
+    outputs = []
+    crawler.engine.scraper = FakeScraper(pipeline, outputs)
+    spider = crawler.spider
+
+    def idle():
+        with pytest.raises(DontCloseSpider):
+            pipeline.spider_idle(spider)
+
+    idle()  # first call always waits
+    # Another receiver scheduled a request in the same idle pass
+    crawler.signals.send_catch_log(signal=signals.request_scheduled)
+    idle()
+    assert outputs == []
+    crawler.engine.idle = False
+    idle()
+    assert outputs == []
+    crawler.engine.idle = True
+    # The request produced a meeting
+    pipeline.process_item(meeting("u1", datetime(2026, 10, 15, 17, 30)), spider)
+    pipeline.process_item(meeting("u2", datetime(2026, 11, 19, 17, 30)), spider)
+    crawler.signals.send_catch_log(signal=signals.item_scraped)
+    idle()
+    assert outputs == []
+    idle()  # quiet and idle: diff runs now
+    assert {o["_id"]: o["status"] for o in outputs} == {
+        "ocd-event/u3": CANCELLED,
+        "ocd-event/u4": CANCELLED,
     }
 
 
@@ -350,8 +439,7 @@ def test_guard_marks_status_failing_and_reports_to_sentry(sentry_events):
     pipeline = InMemoryGuardedDiffPipeline.from_crawler(crawler)
     outputs = []
     crawler.engine.scraper = FakeScraper(pipeline, outputs)
-    with pytest.raises(DontCloseSpider):
-        pipeline.spider_idle(crawler.spider)
+    idle_until_injected(pipeline, outputs)
     # Re-emitted items count as scraped, which alone would make the badge "running"
     crawler.stats.set_value("item_scraped_count", len(outputs))
     crawler.signals.send_catch_log(signal=signals.spider_closed)
@@ -366,11 +454,15 @@ def test_guard_marks_status_failing_and_reports_to_sentry(sentry_events):
 
 
 @freeze_time(NOW)
-def test_guard_check_failure_falls_back_to_core_behaviour(caplog, monkeypatch):
+def test_guard_check_failure_fails_safe(caplog, monkeypatch):
     def broken_check(self, spider):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(InMemoryGuardedDiffPipeline, "_check_guard", broken_check)
-    outputs, pipeline, _ = run_pipeline(UPCOMING, [])
+    scraped = [meeting("u1", datetime(2026, 10, 15, 17, 30))]
+    outputs, pipeline, errors = run_pipeline(UPCOMING + PAST, scraped)
     assert "Diff guard check failed" in caplog.text
-    assert [o["status"] for o in outputs] == [CANCELLED] * len(UPCOMING)
+    assert pipeline.guard_tripped
+    assert len(errors) == 1
+    assert "guard check raised an exception" in str(errors[0].value)
+    assert previous_outputs(outputs) == {p["_id"]: p for p in UPCOMING[1:] + PAST}

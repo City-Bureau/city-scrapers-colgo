@@ -1,7 +1,7 @@
 """
 Request-flow tests for the Hood River spiders: an OMP video API failure must
-never stop the EventON calendar from being fetched, and an unreadable or empty
-calendar must fail loudly instead of finishing "successfully" with no items.
+never stop the EventON calendar from being fetched, and an unreadable calendar
+or a run with no meetings must fail loudly instead of finishing "successfully".
 
 ``drive`` is a small stand-in for the Scrapy engine: it feeds canned responses
 or failures to each request's callback/errback, the way Scrapy does (an HTTP
@@ -27,7 +27,10 @@ from scrapy_sentry_errors.extensions import Errors
 from twisted.python.failure import Failure
 
 from city_scrapers.extensions import MAX_ERROR_LINES, StatsLine
-from city_scrapers.mixins.colgo_hood_river_city import HoodRiverCalendarError
+from city_scrapers.mixins.colgo_hood_river_city import (
+    MAX_EXTRA_VIDEO_PAGES,
+    HoodRiverCalendarError,
+)
 from city_scrapers.spiders.colgo_hood_river_city import (
     ColgoHoodRiverEquityAdvisorySpider,
 )
@@ -38,6 +41,11 @@ EVENTON = "evo-ajax=eventon_get_events"
 EVENT_HTML = (
     '<div id="event_1_0" class="eventon_list_event scheduled" data-event_id="1">'
     "</div>"
+)
+MEETING_HTML = (
+    '<div class="eventon_list_event" data-event_id="2"'
+    ' data-time="1790000000-1790003600">'
+    '<span class="evcal_event_title">Mayor\'s Equity Advisory Group</span></div>'
 )
 NO_EVENTS_HTML = (
     "<div class='eventon_list_event no_events'><p class='no_events' >No Events</p>"
@@ -221,6 +229,42 @@ def test_all_video_pages_used_when_omp_works(spider):
     assert len(spider.video_cache) == 250
 
 
+def test_malformed_video_results_use_normal_path(spider):
+    """A non-list "results" used to raise in the callback and strand the counter."""
+
+    def video(request):
+        return json_response(request, {"totalSize": 1, "results": 5})
+
+    calendar, _ = drive(spider, make_responder(video))
+    assert calendar
+    assert not spider._calendar_from_idle
+
+
+def test_bad_total_size_keeps_results(spider):
+    def video(request):
+        page = video_page(0, 3, 3)
+        page["totalSize"] = "lots"
+        return json_response(request, page)
+
+    calendar, _ = drive(spider, make_responder(video))
+    assert calendar
+    assert len(spider.video_cache) == 3
+
+
+def test_extra_video_pages_are_capped(spider):
+    omp_requests = []
+
+    def video(request):
+        omp_requests.append(request)
+        if "start=0&" in request.url:
+            return json_response(request, {"totalSize": 10**7, "results": []})
+        return json_response(request, {"totalSize": 10**7, "results": []})
+
+    calendar, _ = drive(spider, make_responder(video))
+    assert len(omp_requests) == 1 + MAX_EXTRA_VIDEO_PAGES
+    assert calendar
+
+
 # --- Failing loudly -------------------------------------------------------
 
 
@@ -228,38 +272,42 @@ def calendar_request(spider, year=2026):
     return next(r for r in spider._fetch_calendar() if r.meta["year"] == year)
 
 
-def test_unreadable_calendar_response_raises(spider):
+def test_unreadable_calendar_response_is_counted(spider):
     request = calendar_request(spider)
-    with pytest.raises(HoodRiverCalendarError, match="not JSON"):
-        list(spider.parse(html_response(request)))
+    assert list(spider.parse(html_response(request))) == []
+    assert spider._calendar_unreadable == 1
 
 
-def test_calendar_response_without_html_raises(spider):
+def test_calendar_response_without_html_is_counted(spider):
     request = calendar_request(spider)
     response = json_response(request, {"status": "GOOD", "json": []})
-    with pytest.raises(HoodRiverCalendarError, match="no calendar HTML"):
-        list(spider.parse(response))
+    assert list(spider.parse(response)) == []
+    assert spider._calendar_unreadable == 1
 
 
 def test_year_with_no_events_is_not_an_error(spider):
     request = calendar_request(spider, year=2019)
     response = json_response(request, {"status": "GOOD", "html": NO_EVENTS_HTML})
     assert list(spider.parse(response)) == []
+    assert spider._calendar_unreadable == 0
     assert spider._calendar_events == 0
 
 
-def test_calendar_events_are_counted(spider):
+def test_calendar_events_and_meetings_are_counted(spider):
     request = calendar_request(spider)
-    list(spider.parse(json_response(request, {"html": EVENT_HTML * 3})))
+    request.meta["skip_link_validation"] = True
+    html = EVENT_HTML * 2 + MEETING_HTML
+    items = list(spider.parse(json_response(request, {"html": html})))
     assert spider._calendar_events == 3
+    assert spider._meetings_parsed == len(items) == 1
 
 
-def test_failed_calendar_request_raises(spider):
+def test_failed_calendar_request_is_counted(spider):
     request = calendar_request(spider)
     failure = http_error(request)
     failure.request = request
-    with pytest.raises(HoodRiverCalendarError, match="2026 failed"):
-        request.errback(failure)
+    assert not list(request.errback(failure) or [])
+    assert spider._calendar_failures == 1
 
 
 @pytest.fixture
@@ -277,16 +325,20 @@ def crawled():
     return crawler, spider, captured, (sentry, stats_line)
 
 
-def test_run_with_zero_events_reports_to_sentry(crawled, capsys):
+def close(crawler, spider, reason="finished"):
+    crawler.signals.send_catch_log(signals.spider_closed, spider=spider, reason=reason)
+
+
+def test_run_with_zero_meetings_reports_to_sentry(crawled, capsys):
     crawler, spider, captured, _ = crawled
     list(spider._fetch_calendar())
     spider._calendar_responses = 8
-    crawler.signals.send_catch_log(
-        signals.spider_closed, spider=spider, reason="finished"
-    )
+    spider._calendar_events = 40  # events present, but none became meetings
+    close(crawler, spider)
     assert len(captured) == 1
     assert isinstance(captured[0], HoodRiverCalendarError)
-    assert "0 EventON events" in str(captured[0])
+    assert "0 meetings parsed" in str(captured[0])
+    assert "events=40" in str(captured[0])
     stats = crawler.stats.get_stats()
     assert stats["spider_exceptions/HoodRiverCalendarError"] == 1
     out = capsys.readouterr().out
@@ -294,28 +346,49 @@ def test_run_with_zero_events_reports_to_sentry(crawled, capsys):
     assert "spider_errors=1" in out
 
 
-def test_run_with_events_is_quiet(crawled):
+def test_unreadable_and_failed_years_send_one_aggregated_report(crawled):
     crawler, spider, captured, _ = crawled
-    spider._calendar_events = 5
-    crawler.signals.send_catch_log(
-        signals.spider_closed, spider=spider, reason="finished"
-    )
-    assert captured == []
+    requests = {r.meta["year"]: r for r in spider._fetch_calendar()}
+    for year in (2024, 2025):
+        list(spider.parse(html_response(requests[year])))
+    request = requests[2026]
+    failure = http_error(request)
+    failure.request = request
+    request.errback(failure)
+    spider._meetings_parsed = 5
+    close(crawler, spider)
+    assert len(captured) == 1
+    message = str(captured[0])
+    assert "2 unreadable EventON response(s)" in message
+    assert "1 failed EventON request(s)" in message
+    assert "0 meetings" not in message
+    stats = crawler.stats.get_stats()
+    assert stats["hood_river/calendar_unreadable"] == 2
+    assert stats["hood_river/calendar_failed"] == 1
 
 
-def test_interrupted_run_does_not_report_zero_events(crawled):
+def test_idle_fallback_is_reported(crawled):
     crawler, spider, captured, _ = crawled
-    crawler.signals.send_catch_log(
-        signals.spider_closed, spider=spider, reason="shutdown"
-    )
-    assert captured == []
-
-
-def test_idle_spider_fetches_calendar_once(crawled):
-    _, spider, _, _ = crawled
     spider._video_pages_pending = 1  # a video request that never came back
     assert len(list(spider._on_spider_idle_requests())) > 0
     assert list(spider._on_spider_idle_requests()) == []
+    spider._meetings_parsed = 5
+    close(crawler, spider)
+    assert len(captured) == 1
+    assert "spider_idle" in str(captured[0])
+
+
+def test_run_with_meetings_is_quiet(crawled):
+    crawler, spider, captured, _ = crawled
+    spider._meetings_parsed = 5
+    close(crawler, spider)
+    assert captured == []
+
+
+def test_interrupted_run_does_not_report_zero_meetings(crawled):
+    crawler, spider, captured, _ = crawled
+    close(crawler, spider, reason="shutdown")
+    assert captured == []
 
 
 # --- Stats line -----------------------------------------------------------
@@ -373,35 +446,48 @@ def run_engine(scenario):
     return result.stdout.splitlines()
 
 
+def prefixed(lines, prefix):
+    return [line for line in lines if line.startswith(prefix)]
+
+
+YEARS = datetime.now().year + 2 - 2019
+
+
 def test_engine_fetches_calendar_despite_video_503():
     lines = run_engine("ok")
-    stats = [line for line in lines if line.startswith("[stats]")]
     # 3 OMP pages (one 503) + one calendar request per year, no errors.
-    years = datetime.now().year + 2 - 2019
-    assert stats == [
-        "[stats] colgo_hood_river_equity_advisory items=0"
-        f" responses={3 + years} 2xx={2 + years} non_2xx=1 download_errors=0"
+    assert prefixed(lines, "[stats]") == [
+        "[stats] colgo_hood_river_equity_advisory items=1"
+        f" responses={3 + YEARS} 2xx={2 + YEARS} non_2xx=1 download_errors=0"
         " spider_errors=0 log_errors=0 finish_reason=finished"
     ]
-    assert not [line for line in lines if line.startswith("SENTRY")]
+    assert prefixed(lines, "SENTRY") == []
 
 
-def test_engine_reports_unreadable_calendar_to_sentry():
+def test_engine_reports_unreadable_calendar_once():
     lines = run_engine("bad_calendar")
-    years = datetime.now().year + 2 - 2019
-    sentry = [line for line in lines if line.startswith("SENTRY")]
-    # One per unreadable year, plus the zero-events check at close.
-    assert sentry == ["SENTRY HoodRiverCalendarError"] * (years + 1)
-    assert any("is not JSON" in line for line in lines if line.startswith("[error]"))
-    assert f"spider_errors={years + 1}" in lines[-1]
-
-
-def test_engine_reports_zero_event_run_to_sentry():
-    lines = run_engine("empty_calendar")
-    assert [line for line in lines if line.startswith("SENTRY")] == [
-        "SENTRY HoodRiverCalendarError"
-    ]
-    errors = [line for line in lines if line.startswith("[error]")]
+    assert prefixed(lines, "SENTRY") == ["SENTRY HoodRiverCalendarError"]
+    errors = prefixed(lines, "[error]")
     assert len(errors) == 1
-    assert "run finished with 0 EventON events" in errors[0]
+    assert f"{YEARS} unreadable EventON response(s)" in errors[0]
+    assert "0 meetings parsed" in errors[0]
     assert "spider_errors=1" in lines[-1]
+
+
+def test_engine_reports_zero_meeting_run_once():
+    lines = run_engine("empty_calendar")
+    assert prefixed(lines, "SENTRY") == ["SENTRY HoodRiverCalendarError"]
+    errors = prefixed(lines, "[error]")
+    assert len(errors) == 1
+    assert "0 meetings parsed" in errors[0]
+
+
+def test_engine_malformed_video_index_does_not_cancel_meetings():
+    """
+    With DiffPipeline holding an upcoming meeting from the previous run, a
+    malformed OMP response must not push the calendar into the spider_idle
+    pass, where DiffPipeline would publish that meeting as cancelled.
+    """
+    lines = run_engine("malformed_video_with_diff")
+    assert prefixed(lines, "ITEM") == ["ITEM tentative prev-uid"]
+    assert prefixed(lines, "SENTRY") == []

@@ -33,6 +33,8 @@ OMP_SESSIONS_URL = (
     "site/1713/sessions?start={start}&limit={limit}"
 )
 VIDEO_PAGE_SIZE = 100
+# The OMP index held a few hundred sessions in 2026; never queue more than this.
+MAX_EXTRA_VIDEO_PAGES = 50
 
 
 class HoodRiverCalendarError(Exception):
@@ -109,9 +111,12 @@ class ColgoHoodRiverCityMixin(
         self.video_cache = {}
         self._video_pages_pending = 0
         self._calendar_requested = False
+        self._calendar_from_idle = False
         self._calendar_responses = 0
+        self._calendar_unreadable = 0
         self._calendar_failures = 0
         self._calendar_events = 0
+        self._meetings_parsed = 0
 
     def start_requests(self):
         """
@@ -120,9 +125,8 @@ class ColgoHoodRiverCityMixin(
         Videos only add "Video Recording" links, so the calendar must be fetched
         however the video API behaves. Every video page request has an errback,
         and each page (parsed, unreadable or failed) decrements a counter; the
-        calendar is requested when it reaches zero. If a video request is lost
-        without reaching either callback, the spider_idle handler requests the
-        calendar instead.
+        calendar is requested when it reaches zero, always from a callback or
+        errback. The spider_idle handler is only a last resort.
         """
         yield self._video_request(start=0)
 
@@ -137,25 +141,58 @@ class ColgoHoodRiverCityMixin(
         )
 
     def _parse_video_page(self, response):
-        """Collect one page of video sessions; the first page queues the rest."""
+        """
+        Collect one page of video sessions; the first page queues the rest.
+
+        Any problem with the page's content is caught here, so the page is
+        always counted as done and the calendar is never left waiting on it.
+        Follow-up page requests are only created after the try block, so a
+        failure can't leave a counted request that was never yielded.
+        """
+        page_start = response.meta.get("video_start")
+        extra_starts = []
         try:
-            data = response.json()
-            results = data.get("results") or []
-            total_size = int(data.get("totalSize") or 0)
-        except (AttributeError, TypeError, ValueError) as e:
+            extra_starts = self._read_video_page(response, page_start)
+        except Exception as e:
             self.logger.warning(
-                f"OMP video page {response.meta.get('video_start')} unreadable "
+                f"OMP video page {page_start} unreadable "
                 f"({e.__class__.__name__}); continuing without those videos"
             )
-            results, total_size = [], 0
 
-        self.all_video_sessions.extend(results)
-
-        if response.meta.get("video_start") == 0:
-            for start in range(VIDEO_PAGE_SIZE, total_size, VIDEO_PAGE_SIZE):
-                yield self._video_request(start)
-
+        for start in extra_starts:
+            yield self._video_request(start)
         yield from self._video_page_done()
+
+    def _read_video_page(self, response, page_start):
+        """Store a page's sessions; return the starts of further pages to fetch."""
+        data = response.json()
+
+        results = data.get("results")
+        if isinstance(results, list):
+            self.all_video_sessions.extend(r for r in results if isinstance(r, dict))
+        else:
+            self.logger.warning(f"OMP video page {page_start} has no results list")
+
+        if page_start != 0:
+            return []
+        try:
+            total_size = int(data.get("totalSize") or 0)
+        except (TypeError, ValueError):
+            self.logger.warning("OMP video index has an unreadable totalSize")
+            return []
+        last_start = VIDEO_PAGE_SIZE * MAX_EXTRA_VIDEO_PAGES
+        if total_size > last_start + VIDEO_PAGE_SIZE:
+            self.logger.warning(
+                f"OMP video index reports {total_size} sessions; "
+                f"fetching only the first {last_start + VIDEO_PAGE_SIZE}"
+            )
+        return list(
+            range(
+                VIDEO_PAGE_SIZE,
+                min(total_size, last_start + VIDEO_PAGE_SIZE),
+                VIDEO_PAGE_SIZE,
+            )
+        )
 
     def _video_page_failed(self, failure):
         self.logger.warning(
@@ -177,11 +214,21 @@ class ColgoHoodRiverCityMixin(
             raise DontCloseSpider
 
     def _on_spider_idle_requests(self):
-        """Safety net: the spider went idle before the calendar was requested."""
+        """
+        Last resort: the spider went idle before the calendar was requested,
+        which the video page callbacks and errbacks should make impossible.
+
+        This runs in the same spider_idle pass in which DiffPipeline injects
+        the previous run's items. Those reach the pipeline before the calendar
+        responses, so every upcoming meeting is published as cancelled and the
+        real meetings are then dropped as already scraped. This run's output
+        can't be trusted, so it is reported as an error at spider close.
+        """
         if not self._calendar_requested:
+            self._calendar_from_idle = True
             self.logger.warning(
                 f"{self._video_pages_pending} OMP video page(s) never completed; "
-                "fetching the calendar anyway"
+                "fetching the calendar from spider_idle"
             )
             yield from self._fetch_calendar()
 
@@ -249,26 +296,46 @@ class ColgoHoodRiverCityMixin(
             )
 
     def _calendar_failed(self, failure):
-        """
-        A calendar year that could not be downloaded is lost data. Raising here
-        routes the error through Scrapy's spider_error signal (and so to Sentry).
-        """
+        """A calendar year that could not be downloaded; reported at close."""
         self._calendar_failures += 1
+        self._inc_stat("hood_river/calendar_failed")
         year = failure.request.meta.get("year")
-        raise HoodRiverCalendarError(
-            f"{self.name}: EventON request for {year} failed: {failure.value!r}"
-        )
+        self.logger.warning(f"EventON request for {year} failed: {failure.value!r}")
+
+    def _inc_stat(self, key):
+        crawler = getattr(self, "crawler", None)
+        if crawler is not None and crawler.stats is not None:
+            crawler.stats.inc_value(key, spider=self)
 
     def _on_spider_closed(self, spider, reason):
-        """Fail loudly when a finished run parsed no calendar events at all."""
-        if reason != "finished" or self._calendar_events > 0:
+        """
+        Send at most one aggregated error per run when the calendar could not
+        be read, or a finished run produced no meetings.
+        """
+        problems = []
+        if self._calendar_unreadable:
+            problems.append(
+                f"{self._calendar_unreadable} unreadable EventON response(s)"
+            )
+        if self._calendar_failures:
+            problems.append(f"{self._calendar_failures} failed EventON request(s)")
+        if self._calendar_from_idle:
+            problems.append(
+                "calendar requested from spider_idle, so upcoming meetings may "
+                "have been published as cancelled"
+            )
+        if reason == "finished" and self._meetings_parsed == 0:
+            problems.append("0 meetings parsed")
+        if not problems:
             return
         self._report_error(
             HoodRiverCalendarError(
-                f"{self.name}: run finished with 0 EventON events "
-                f"(calendar requested={self._calendar_requested}, "
-                f"responses parsed={self._calendar_responses}, "
-                f"requests failed={self._calendar_failures})"
+                f"{self.name}: {'; '.join(problems)} "
+                f"(finish_reason={reason}, "
+                f"calendar requested={self._calendar_requested}, "
+                f"responses={self._calendar_responses}, "
+                f"events={self._calendar_events}, "
+                f"meetings={self._meetings_parsed})"
             )
         )
 
@@ -343,29 +410,32 @@ class ColgoHoodRiverCityMixin(
         """
         Parse one year of the EventON API JSON response.
 
-        A response that is not JSON or carries no calendar HTML raises
-        HoodRiverCalendarError, which Scrapy logs and sends to Sentry. A year
-        with no events is normal: EventON returns a "no_events" placeholder.
+        A response that is not JSON or carries no calendar HTML is counted
+        (stat hood_river/calendar_unreadable) and reported once at spider
+        close. A year with no events is normal: EventON returns a "no_events"
+        placeholder.
         """
         self._calendar_responses += 1
         year = response.meta.get("year")
         try:
             data = response.json()
         except (AttributeError, ValueError):
-            raise HoodRiverCalendarError(
-                f"{self.name}: EventON response for {year} is not JSON "
-                f"(status {response.status}, "
+            data = None
+            detail = (
+                f"is not JSON (status {response.status}, "
                 f"Content-Type {response.headers.get('Content-Type')!r}, "
                 f"{len(response.body)} bytes)"
             )
+        else:
+            keys = list(data.keys()) if isinstance(data, dict) else type(data).__name__
+            detail = f"has no calendar HTML (status {response.status}, keys {keys})"
 
         html_content = self._extract_calendar_html(data)
         if not html_content:
-            keys = list(data.keys()) if isinstance(data, dict) else type(data).__name__
-            raise HoodRiverCalendarError(
-                f"{self.name}: EventON response for {year} has no calendar HTML "
-                f"(status {response.status}, keys {keys})"
-            )
+            self._calendar_unreadable += 1
+            self._inc_stat("hood_river/calendar_unreadable")
+            self.logger.warning(f"EventON response for {year} {detail}")
+            return
 
         selector = Selector(text=html_content)
         self._calendar_events += len(selector.css("[data-event_id]"))
@@ -432,6 +502,7 @@ class ColgoHoodRiverCityMixin(
             meeting["links"] = self._add_video_link(meeting, meeting["links"])
             meeting["status"] = self._get_status(meeting, event)
             meeting["id"] = self._get_id(meeting)
+            self._meetings_parsed += 1
 
             if response.meta.get("skip_link_validation"):
                 yield meeting
@@ -1049,7 +1120,7 @@ class ColgoHoodRiverCityMixin(
 
     def _add_video_link(self, meeting, links):
         """Add video URL from OMP Network cache if available."""
-        if not hasattr(self, "video_cache") or not self.video_cache:
+        if not self.video_cache:
             return links
 
         # Get meeting date and title for matching

@@ -1233,6 +1233,19 @@ class ColgoHoodRiverCityMixin(
     # "rescheduled" marks the new, active meeting, so it is not in this set.
     EVENTON_CANCELLED_STATUSES = {"cancelled", "canceled", "postponed"}
 
+    # An explicit cancellation in the calendar's own title ("... - Cancelled").
+    CANCELLED_TITLE_RE = re.compile(r"\b(cancell?ed|postponed)\b", re.IGNORECASE)
+
+    def _raw_title(self, event):
+        """The event title as shown on the calendar, before _clean_title."""
+        if event is None:
+            return ""
+        return (
+            event.css(".evcal_event_title::text").get()
+            or event.attrib.get("data-event_name", "")
+            or ""
+        ).strip()
+
     def _get_status(self, meeting, event=None, evo_status=None):
         """
         Get meeting status, preferring EventON's own structured status.
@@ -1247,14 +1260,23 @@ class ColgoHoodRiverCityMixin(
         """
         from city_scrapers_core.constants import CANCELLED, PASSED, TENTATIVE
 
-        # The calendar's structured status is the source of truth. When it is
-        # present, don't second-guess it from page text: words like
-        # "cancelled" or "rescheduled" in titles, notes or surrounding markup
-        # have produced false cancellations.
+        # Staff sometimes cancel a meeting by renaming it ("... - Cancelled")
+        # while EventON's status stays "scheduled" (63 such events, mostly
+        # 2021-2024), so an explicit cancellation in the raw title wins.
+        if self.CANCELLED_TITLE_RE.search(self._raw_title(event)):
+            return CANCELLED
+
+        # Otherwise the calendar's structured status is the source of truth.
+        # Don't second-guess it from other page text: words like "cancelled"
+        # or "rescheduled" in notes or surrounding markup have produced false
+        # cancellations.
         if evo_status:
             if evo_status in self.EVENTON_CANCELLED_STATUSES:
                 return CANCELLED
-            if meeting["start"] < datetime.now():
+            # Meeting starts are naive local times; compare against local now,
+            # not the runner's UTC clock.
+            now = datetime.now(ZoneInfo(self.timezone)).replace(tzinfo=None)
+            if meeting["start"] < now:
                 return PASSED
             return TENTATIVE
 

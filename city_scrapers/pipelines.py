@@ -23,7 +23,8 @@ The guard
 ---------
 After that, the guard checks the run. It trips when any of these hold:
 
-* the run scraped zero meetings and the previous feed had any,
+* the run scraped zero meetings and the previous feed had any (a meeting counts once
+  it has passed every pipeline),
 * the run scraped zero upcoming meetings and the previous feed had any upcoming,
 * the previous feed had at least ``CITY_SCRAPERS_DIFF_GUARD_MIN_PREVIOUS`` (3)
   upcoming meetings and this run scraped fewer than
@@ -44,10 +45,16 @@ Things to know
   next run's baseline, so a genuine large drop (an agency really did cancel most of
   its meetings, or the site now lists fewer) keeps tripping on every run until
   someone looks at it.
-* Escape hatch: to accept a genuine drop, run the spider once with the guard off,
-  ``scrapy crawl <spider> -s CITY_SCRAPERS_DIFF_GUARD_ENABLED=False``, or set it in
-  that spider's ``custom_settings`` until the new baseline has been published. The
-  missing meetings are then marked cancelled as core always did.
+* A body with few upcoming meetings trips too when they all genuinely disappear
+  (zero upcoming has no minimum), so that cancellation waits for someone to look
+  or for the meeting date to pass.
+* Escape hatch: to accept a genuine drop, set
+  ``CITY_SCRAPERS_DIFF_GUARD_ENABLED = False`` in that spider's ``custom_settings``,
+  merge, and revert once the dropped meetings' dates have passed (core keeps
+  republishing them as cancelled, so they still count as previous upcoming
+  meetings). The prod cron takes no per-spider settings, so ``-s`` only helps for a
+  local run with the prod secrets. With the guard off, core marks the missing
+  meetings cancelled as it always did.
 * If a run trips the ratio rule while some meetings changed ID (for example the
   title changed, which changes the ID), the feed carries both the old item,
   unchanged, and the new one, so that meeting appears twice until the guard clears.
@@ -129,6 +136,7 @@ class DiffGuardMixin:
         pipeline.guard_min_previous = settings.getint(
             "CITY_SCRAPERS_DIFF_GUARD_MIN_PREVIOUS", DEFAULT_GUARD_MIN_PREVIOUS
         )
+        pipeline.scraped_count = 0
         pipeline.scraped_upcoming_count = 0
         pipeline.guard_tripped = False
         pipeline.activity_count = 0
@@ -140,22 +148,22 @@ class DiffGuardMixin:
             signals.item_error,
         ):
             crawler.signals.connect(pipeline.record_activity, signal=signal)
+        crawler.signals.connect(pipeline.record_scraped, signal=signals.item_scraped)
         return pipeline
 
     def record_activity(self):
         self.activity_count += 1
 
+    def record_scraped(self, item: Mapping):
+        """Count meetings once they pass every pipeline, so items a later pipeline
+        fails on don't make a broken run look healthy. Disconnected at the guard check,
+        before the previous feed is injected."""
+        self.scraped_count += 1
+        if _is_upcoming(item, _now_str()):
+            self.scraped_upcoming_count += 1
+
     def process_item(self, item: Mapping, spider: Spider) -> Mapping:
-        if _is_current_item(item):
-            # Raises DropItem for duplicates, so only unique items are counted
-            result = super().process_item(item, spider)
-            try:
-                if _is_upcoming(result, _now_str()):
-                    self.scraped_upcoming_count += 1
-            except Exception:
-                logger.exception("Could not read start of %s", result.get("id"))
-            return result
-        if not self.guard_tripped:
+        if _is_current_item(item) or not self.guard_tripped:
             return super().process_item(item, spider)
         # Guard tripped: keep previous items that weren't scraped this run as they
         # were, past or upcoming, instead of dropping or cancelling them
@@ -178,6 +186,9 @@ class DiffGuardMixin:
     def spider_idle(self, spider: Spider):
         if not self.crawl_finished():
             raise DontCloseSpider
+        self.crawler.signals.disconnect(
+            self.record_scraped, signal=signals.item_scraped
+        )
         try:
             self._check_guard(spider)
         except Exception:
@@ -192,7 +203,7 @@ class DiffGuardMixin:
         now_str = _now_str()
         previous = spider._previous_results
         previous_upcoming = sum(1 for item in previous if _is_upcoming(item, now_str))
-        scraped = len(spider._scraped_ids)
+        scraped = self.scraped_count
         scraped_upcoming = self.scraped_upcoming_count
 
         if scraped == 0 and len(previous) > 0:

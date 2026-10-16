@@ -48,10 +48,21 @@ class FakeScraper:
         self.outputs = outputs
 
     def _process_spidermw_output(self, item, request, response, spider):
-        try:
-            self.outputs.append(self.pipeline.process_item(item, spider))
-        except DropItem:
-            pass
+        process(self.pipeline, item, spider, self.outputs)
+
+
+def process(pipeline, item, spider, outputs, delivered=True):
+    """Run one item through the pipeline; like Scrapy, send item_scraped once it
+    passes. delivered=False stands in for a later pipeline failing on it."""
+    try:
+        result = pipeline.process_item(item, spider)
+    except DropItem:
+        return
+    outputs.append(result)
+    if delivered:
+        pipeline.crawler.signals.send_catch_log(
+            signal=signals.item_scraped, item=result, response=None, spider=spider
+        )
 
 
 class FakeEngine:
@@ -117,7 +128,9 @@ PAST = [
 ]
 
 
-def run_pipeline(previous_feed, scraped, settings=None, pipeline_cls=None):
+def run_pipeline(
+    previous_feed, scraped, settings=None, pipeline_cls=None, delivered=True
+):
     """Run items through the pipeline the way a crawl does: scraped items first, then
     spider_idle re-injects the previous feed. Returns (outputs, pipeline, errors)."""
     pipeline_cls = pipeline_cls or InMemoryGuardedDiffPipeline
@@ -132,10 +145,7 @@ def run_pipeline(previous_feed, scraped, settings=None, pipeline_cls=None):
     spider = crawler.spider
     outputs = []
     for item in scraped:
-        try:
-            outputs.append(pipeline.process_item(item, spider))
-        except DropItem:
-            pass
+        process(pipeline, item, spider, outputs, delivered)
     crawler.engine.scraper = FakeScraper(pipeline, outputs)
     idle_until_injected(pipeline, outputs)
     return outputs, pipeline, errors
@@ -265,6 +275,18 @@ def test_duplicate_scraped_items_counted_once():
 
 
 @freeze_time(NOW)
+def test_items_failing_in_later_pipelines_trip_the_guard():
+    scraped = [
+        meeting("u1", datetime(2026, 10, 15, 17, 30)),
+        meeting("u2", datetime(2026, 11, 19, 17, 30)),
+    ]
+    outputs, pipeline, errors = run_pipeline(UPCOMING, scraped, delivered=False)
+    assert pipeline.guard_tripped
+    assert "scraped zero meetings" in str(errors[0].value)
+    assert previous_outputs(outputs) == {p["_id"]: p for p in UPCOMING[2:]}
+
+
+@freeze_time(NOW)
 def test_sharp_drop_ignored_below_min_previous():
     # Only 2 upcoming meetings in the previous feed, under the minimum of 3, and the
     # run scraped one of them, so the other is cancelled as before
@@ -336,9 +358,8 @@ def test_waits_while_engine_busy_or_activity_since_last_idle():
     assert outputs == []
     crawler.engine.idle = True
     # The request produced a meeting
-    pipeline.process_item(meeting("u1", datetime(2026, 10, 15, 17, 30)), spider)
-    pipeline.process_item(meeting("u2", datetime(2026, 11, 19, 17, 30)), spider)
-    crawler.signals.send_catch_log(signal=signals.item_scraped)
+    process(pipeline, meeting("u1", datetime(2026, 10, 15, 17, 30)), spider, [])
+    process(pipeline, meeting("u2", datetime(2026, 11, 19, 17, 30)), spider, [])
     idle()
     assert outputs == []
     idle()  # quiet and idle: diff runs now

@@ -1,17 +1,40 @@
 """
 Mixin for scraping The Dalles, Oregon city government meetings.
 
-The Dalles uses the OmpNetwork platform (https://ompnetwork.org/) for hosting
-video streaming and meeting management. This mixin handles the common API
-patterns used across all Dalles government agencies.
+The Dalles publishes meetings on the Open Media (OmpNetwork) platform at
+https://thedalles-oregon.ompnetwork.org/. In autumn 2026 the platform moved to a
+new app: the old ``/api-cache/site/312/sessions`` endpoint now returns the new
+app's HTML shell, and sessions are served as JSON from ``/api/sessions/``, with
+new category IDs and ISO 8601 dates.
+
+The sessions API is the only source for these spiders: it carries the meeting
+list, documents and video links in one response, so nothing else has to load
+first. Any response that is not the expected JSON raises ``DallesApiError``,
+and a run that ends with no meetings reports one, so a broken source shows up
+in Sentry and the cron ``[stats]`` line instead of as a quiet empty feed.
 """
 
 import re
 from datetime import datetime, timezone
+from urllib.parse import urlencode
+from zoneinfo import ZoneInfo
 
 import scrapy
 from city_scrapers_core.items import Meeting
 from city_scrapers_core.spiders import CityScrapersSpider
+from scrapy import signals
+from twisted.python.failure import Failure
+
+# Sessions created before the platform move store the Pacific wall-clock time
+# with a "Z" suffix (e.g. session 538, created 2026-09-21, "2026-09-28T17:30:00Z"
+# for a 5:30 p.m. meeting). Sessions created on the new platform store real UTC
+# (session 539, created 2026-09-28, onward; e.g. 542 "2026-10-27T00:30:00Z" for
+# 5:30 p.m. PDT on Oct 26). Both were checked against the agenda PDFs.
+WALL_CLOCK_CREATED_BEFORE = datetime(2026, 9, 28, tzinfo=timezone.utc)
+
+
+class DallesApiError(Exception):
+    """The Dalles sessions API could not be read, so meetings would be missed."""
 
 
 class DallesCityMixinMeta(type):
@@ -45,7 +68,8 @@ class DallesCityMixinMeta(type):
 class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
     """
     This class is designed to be used as a mixin for The Dalles city website.
-    Agencies are identified by a category ID on the OmpNetwork platform.
+    Agencies are identified by a category ID on the Open Media platform
+    (listed at https://thedalles-oregon.ompnetwork.org/api/categories/).
 
     To use this mixin, create a child spider class that inherits from DallesCityMixin
     and define the required static variables: agency, name, category_id, and location.
@@ -61,63 +85,69 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
     location = None
     time_notes = None
 
-    # The Dalles OmpNetwork site ID (constant for all Dalles agencies)
-    site_id = "312"
-
     timezone = "America/Los_Angeles"
     base_url = "https://thedalles-oregon.ompnetwork.org"
 
-    # API has a maximum limit of ~150 items per request, use 100 to be safe
     page_size = 100
+    # Guard against a "next" link that never ends.
+    max_pages = 50
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._pages = 0
+        self._meetings_parsed = 0
+        self._failed_requests = 0
+        self._other_category_items = 0
+
+    @classmethod
+    def from_crawler(cls, crawler, *args, **kwargs):
+        spider = super().from_crawler(crawler, *args, **kwargs)
+        crawler.signals.connect(spider._on_spider_closed, signal=signals.spider_closed)
+        return spider
 
     def start_requests(self):
-        """
-        This spider mixin fetches meeting data from The Dalles OmpNetwork API
-        using a category ID which is specified in each child spider class.
-        """
-        api_url = self._build_api_url(start=0, limit=self.page_size)
-        yield scrapy.Request(url=api_url, callback=self.parse)
+        """Request the first page of this agency's sessions."""
+        yield self._request(self.api_url)
 
-    def _build_api_url(self, start=0, limit=100):
-        """
-        Build API URL with pagination parameters.
-
-        Args:
-            start: Offset for pagination
-            limit: Number of items to fetch
-
-        Returns:
-            Full API URL with parameters
-        """
-        base_url = "https://thedalles-oregon.ompnetwork.org/api-cache"
-        return (
-            f"{base_url}/site/{self.site_id}/sessions"
-            f"?category[]={self.category_id}&start={start}&limit={limit}"
-        )
+    def _build_api_url(self, offset=0, limit=100):
+        """Build a sessions API URL for this agency's category."""
+        params = {"category": self.category_id, "limit": limit, "offset": offset}
+        return f"{self.base_url}/api/sessions/?{urlencode(params)}"
 
     @property
     def api_url(self):
         """Construct the initial API URL for the agency."""
-        return self._build_api_url(start=0, limit=self.page_size)
+        return self._build_api_url(offset=0, limit=self.page_size)
+
+    def _request(self, url):
+        self._pages += 1
+        # The API is Django REST Framework: without this header it answers
+        # Scrapy's default "Accept: text/html" with its HTML browsable page.
+        return scrapy.Request(
+            url=url,
+            headers={"Accept": "application/json"},
+            callback=self.parse,
+            errback=self._request_failed,
+        )
 
     def parse(self, response):
         """
-        Parse the API response and yield meeting items.
+        Parse one page of the sessions API and yield meeting items, then
+        follow the API's ``next`` link until every page has been read.
 
-        This method handles pagination automatically to ensure all historical,
-        current, and future meetings are scraped regardless of how many years
-        pass or how many meetings accumulate in the system.
-
-        Args:
-            response: Scrapy response object containing JSON data
-
-        Yields:
-            Meeting items and follow-up requests for pagination
+        Raises:
+            DallesApiError: the response is not the sessions JSON.
         """
-        data = response.json()
+        data = self._load_json(response)
 
-        # Parse all meetings in current page
-        for item in data.get("results", []):
+        for item in data["results"]:
+            category = (item.get("category") or {}).get("id")
+            if str(category) != str(self.category_id):
+                # The API returns every category when it ignores the filter;
+                # never publish another agency's meetings under this one.
+                self._other_category_items += 1
+                continue
+
             meeting = Meeting(
                 title=self._parse_title(item),
                 description="",
@@ -131,25 +161,89 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
                 source=self._parse_source(item),
             )
 
-            meeting["status"] = self._get_status(meeting)
+            # _parse_title strips "CANCELLED", so check the raw title too.
+            meeting["status"] = self._get_status(meeting, text=item.get("title") or "")
             meeting["id"] = self._get_id(meeting)
 
+            self._meetings_parsed += 1
             yield meeting
 
-        # Handle pagination if there are more results
-        current_start = data.get("start", 0)
-        current_size = data.get("size", 0)
-        total_size = int(data.get("totalSize", 0))
+        next_url = data.get("next")
+        if next_url:
+            if self._pages >= self.max_pages:
+                raise DallesApiError(
+                    f"{self.name}: stopped after {self._pages} pages; "
+                    f"next={next_url}"
+                )
+            yield self._request(next_url)
 
-        # Check if there are more pages to fetch
-        if current_start + current_size < total_size:
-            next_start = current_start + current_size
-            next_url = self._build_api_url(start=next_start, limit=self.page_size)
-            yield scrapy.Request(url=next_url, callback=self.parse)
+    def _load_json(self, response):
+        """Return the decoded sessions page, or raise DallesApiError."""
+        content_type = response.headers.get("Content-Type", b"").decode(
+            "latin-1", "replace"
+        )
+        try:
+            data = response.json()
+        except (ValueError, AttributeError) as exc:
+            snippet = " ".join(response.text[:80].split())
+            raise DallesApiError(
+                f"{self.name}: sessions API did not return JSON "
+                f"(status={response.status}, content-type={content_type!r}, "
+                f"url={response.url}, starts={snippet!r})"
+            ) from exc
+        if not isinstance(data, dict) or not isinstance(data.get("results"), list):
+            raise DallesApiError(
+                f"{self.name}: sessions API JSON has no 'results' list "
+                f"(url={response.url})"
+            )
+        return data
+
+    def _request_failed(self, failure):
+        """A page that could not be downloaded; reported at close."""
+        self._failed_requests += 1
+        self.logger.warning(f"Sessions request failed: {failure.value!r}")
+
+    def _on_spider_closed(self, spider, reason):
+        """Report one error per run if pages failed or no meetings were found."""
+        problems = []
+        if self._failed_requests:
+            problems.append(f"{self._failed_requests} failed sessions request(s)")
+        if reason == "finished" and self._meetings_parsed == 0:
+            problems.append("0 meetings parsed")
+        if self._other_category_items:
+            problems.append(
+                f"{self._other_category_items} item(s) from other categories skipped"
+            )
+        if not problems:
+            return
+        self._report_error(
+            DallesApiError(
+                f"{self.name}: {'; '.join(problems)} "
+                f"(finish_reason={reason}, pages={self._pages}, "
+                f"meetings={self._meetings_parsed})"
+            )
+        )
+
+    def _report_error(self, exc):
+        """
+        Report an error outside a callback the way Scrapy reports callback
+        errors: ERROR log, spider_exceptions stat, and the spider_error signal
+        that scrapy_sentry_errors.extensions.Errors forwards to Sentry.
+        """
+        self.logger.error(str(exc))
+        self.crawler.stats.inc_value(
+            f"spider_exceptions/{exc.__class__.__name__}", spider=self
+        )
+        self.crawler.signals.send_catch_log(
+            signal=signals.spider_error,
+            failure=Failure(exc),
+            response=None,
+            spider=self,
+        )
 
     def _parse_title(self, item):
         """Parse or generate meeting title."""
-        title = item.get("title", "").strip()
+        title = (item.get("title") or "").strip()
         if not title:
             return self.agency
         # Clean up title by removing streaming-related suffixes
@@ -158,6 +252,8 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
         # Remove OmpNetwork-specific suffixes using regex to catch all variants
         # Handles: " - Live Stream", "- Live Stream", "-Live Stream",
         #          " | Live Stream", "| Live Stream", "|Live Stream"
+        # "- Livestream" is left as is: older meetings already carry it in their
+        # IDs, and changing it would duplicate them.
         title = re.sub(
             r"\s*[-|]\s*Live Stream$", "", title, flags=re.IGNORECASE
         ).strip()
@@ -165,25 +261,29 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
 
     def _parse_start(self, item):
         """
-        Parse start datetime from Unix timestamp.
+        Parse the start as a naive datetime in Pacific time (for compatibility
+        with city-scrapers-core's _get_status, which uses naive datetime.now()).
 
-        The OmpNetwork API returns Unix timestamps that represent Pacific time
-        directly (stored as if they were UTC). We interpret the timestamp as
-        Pacific time and return a naive datetime object (for compatibility with
-        city-scrapers-core's _get_status method which uses naive datetime.now()).
-
-        Example: A meeting at 5:30 PM PST (timestamp: 1768239000) is stored as
-        1768239000 which when decoded as UTC gives 2026-01-12 17:30:00. This
-        UTC interpretation is actually the correct Pacific time.
+        See WALL_CLOCK_CREATED_BEFORE: sessions created before the platform
+        move hold the Pacific wall-clock time labelled as UTC; newer sessions
+        hold real UTC.
         """
-        timestamp = item.get("date")
-        if timestamp:
-            # The API stores Pacific time as Unix timestamp
-            # Use timezone-aware conversion then strip timezone for naive datetime
-            return datetime.fromtimestamp(int(timestamp), tz=timezone.utc).replace(
-                tzinfo=None
-            )
-        return None
+        start = self._parse_iso(item.get("start_date"))
+        if start is None:
+            return None
+        created = self._parse_iso(item.get("created_at"))
+        if created is not None and created < WALL_CLOCK_CREATED_BEFORE:
+            return start.replace(tzinfo=None)
+        return start.astimezone(ZoneInfo(self.timezone)).replace(tzinfo=None)
+
+    @staticmethod
+    def _parse_iso(value):
+        if not value:
+            return None
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
 
     def _parse_links(self, item):
         """Parse meeting links (agendas, minutes, packets, videos)."""
@@ -195,20 +295,21 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
             links.append({"href": video_url, "title": "Video"})
 
         # Add document links
-        for doc in item.get("documents", []):
-            doc_url = doc.get("url") or ""
-            doc_url = doc_url.strip() if doc_url else ""
-            doc_type = doc.get("type") or "Document"
-            doc_type = doc_type.strip() if doc_type else "Document"
-            if doc_url:
-                links.append({"href": doc_url, "title": doc_type})
+        for doc in item.get("documents") or []:
+            doc_url = (doc.get("file") or doc.get("link") or "").strip()
+            if not doc_url:
+                continue
+            title = (doc.get("label") or "").strip()
+            if not title:
+                doc_type = (doc.get("type") or "").strip()
+                title = doc_type.replace("_", " ").title() or "Document"
+            links.append({"href": doc_url, "title": title})
 
         return links
 
     def _parse_source(self, item):
-        """Parse or generate source URL."""
-        session_url = item.get("url") or ""
-        session_url = session_url.strip() if session_url else ""
-        if session_url:
-            return f"https://thedalles-oregon.ompnetwork.org{session_url}"
+        """Link to the session's page on the Open Media site."""
+        session_id = item.get("id")
+        if session_id:
+            return f"{self.base_url}/sessions/{session_id}"
         return self.api_url

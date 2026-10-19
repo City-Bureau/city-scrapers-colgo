@@ -1,0 +1,397 @@
+
+
+
+
+<!DOCTYPE html>
+<html>
+  <head>
+    
+
+      
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <meta name="robots" content="NONE,NOARCHIVE" />
+      
+
+      <title>Session List – Django REST framework</title>
+
+      
+        
+          <link rel="stylesheet" type="text/css" href="https://dcwecje7bjjjc.cloudfront.net/static/rest_framework/css/bootstrap.min.css"/>
+          <link rel="stylesheet" type="text/css" href="https://dcwecje7bjjjc.cloudfront.net/static/rest_framework/css/bootstrap-tweaks.css"/>
+        
+
+        <link rel="stylesheet" type="text/css" href="https://dcwecje7bjjjc.cloudfront.net/static/rest_framework/css/prettify.css"/>
+        <link rel="stylesheet" type="text/css" href="https://dcwecje7bjjjc.cloudfront.net/static/rest_framework/css/default.css"/>
+        
+      
+
+    
+  </head>
+
+  
+  <body class="">
+
+    <div class="wrapper">
+      
+        <div class="navbar navbar-static-top navbar-inverse"
+             role="navigation" aria-label="navbar">
+          <div class="container">
+            <span>
+              
+                <a class='navbar-brand' rel="nofollow" href='https://www.django-rest-framework.org/'>
+                    Django REST framework
+                </a>
+              
+            </span>
+            <ul class="nav navbar-nav pull-right">
+              
+                
+                  
+                
+              
+            </ul>
+          </div>
+        </div>
+      
+
+      <div class="container">
+        
+          <ul class="breadcrumb">
+            
+              
+                <li class="active"><a href="/api/sessions/">Session List</a></li>
+              
+            
+          </ul>
+        
+
+        <!-- Content -->
+        <div id="content" role="main" aria-label="content">
+          
+
+          <div class="region"  aria-label="request form">
+          
+
+          
+            <form id="get-form" class="pull-right">
+              <fieldset>
+                
+                  <div class="btn-group format-selection">
+                    <a class="btn btn-primary js-tooltip" href="/api/sessions/?category=1&amp;limit=1" rel="nofollow" title="Make a GET request on the Session List resource">GET</a>
+
+                    <button class="btn btn-primary dropdown-toggle js-tooltip" data-toggle="dropdown" title="Specify a format for the GET request">
+                      <span class="caret"></span>
+                    </button>
+                    <ul class="dropdown-menu">
+                      
+                        <li>
+                          <a class="js-tooltip format-option" href="/api/sessions/?category=1&amp;format=json&amp;limit=1" rel="nofollow" title="Make a GET request on the Session List resource with the format set to `json`">json</a>
+                        </li>
+                      
+                        <li>
+                          <a class="js-tooltip format-option" href="/api/sessions/?category=1&amp;format=api&amp;limit=1" rel="nofollow" title="Make a GET request on the Session List resource with the format set to `api`">api</a>
+                        </li>
+                      
+                    </ul>
+                  </div>
+                
+              </fieldset>
+            </form>
+          
+
+          
+
+          
+
+          
+            <div class="dropdown" style="float: right; margin-right: 10px">
+              <button class="btn btn-default" id="extra-actions-menu" data-toggle="dropdown" aria-haspopup="true" aria-expanded="true">
+                Extra Actions
+                <span class="caret"></span>
+              </button>
+              <ul class="dropdown-menu" aria-labelledby="extra-actions-menu">
+                
+                <li><a href="https://thedalles-oregon.ompnetwork.org/api/sessions/search/">Search</a></li>
+                
+                <li><a href="https://thedalles-oregon.ompnetwork.org/api/sessions/years/">Years</a></li>
+                
+              </ul>
+            </div>
+          
+
+          
+            <button style="float: right; margin-right: 10px" data-toggle="modal" data-target="#filtersModal" class="btn btn-default">
+              <span class="glyphicon glyphicon-wrench" aria-hidden="true"></span>
+              Filters
+            </button>
+          
+
+          
+          </div>
+
+            <div class="content-main" role="main"  aria-label="main content">
+              <div class="page-header">
+                <h1>Session List</h1>
+              </div>
+              <div style="float:left">
+                
+                  <p></p>
+                
+              </div>
+
+              
+                <nav style="float: right">
+                  <ul class="pagination" style="margin: 5px 0 10px 0">
+  
+    <li class="disabled">
+      <a href="#" aria-label="Previous">
+        <span aria-hidden="true">&laquo;</span>
+      </a>
+    </li>
+  
+
+  
+    
+      
+        <li class="active">
+          <a href="https://thedalles-oregon.ompnetwork.org/api/sessions/?category=1&amp;limit=1">1</a>
+        </li>
+      
+    
+  
+    
+      
+        <li>
+          <a href="https://thedalles-oregon.ompnetwork.org/api/sessions/?category=1&amp;limit=1&amp;offset=1">2</a>
+        </li>
+      
+    
+  
+    
+      
+        <li>
+          <a href="https://thedalles-oregon.ompnetwork.org/api/sessions/?category=1&amp;limit=1&amp;offset=2">3</a>
+        </li>
+      
+    
+  
+    
+      <li class="disabled">
+        <a href="#"><span aria-hidden="true">&hellip;</span></a>
+      </li>
+    
+  
+    
+      
+        <li>
+          <a href="https://thedalles-oregon.ompnetwork.org/api/sessions/?category=1&amp;limit=1&amp;offset=286">287</a>
+        </li>
+      
+    
+  
+
+  
+    <li>
+      <a href="https://thedalles-oregon.ompnetwork.org/api/sessions/?category=1&amp;limit=1&amp;offset=1" aria-label="Next">
+        <span aria-hidden="true">&raquo;</span>
+      </a>
+    </li>
+  
+</ul>
+
+                </nav>
+              
+
+              <div class="request-info" style="clear: both" aria-label="request info">
+                <pre class="prettyprint"><b>GET</b> /api/sessions/?category=1&amp;limit=1</pre>
+              </div>
+
+              <div class="response-info" aria-label="response info">
+                <pre class="prettyprint"><span class="meta nocode"><b>HTTP 200 OK</b>
+<b>Allow:</b> <span class="lit">GET, POST, HEAD, OPTIONS</span>
+<b>Content-Type:</b> <span class="lit">application/json</span>
+<b>Vary:</b> <span class="lit">Accept</span>
+
+</span>{
+    &quot;count&quot;: 287,
+    &quot;next&quot;: &quot;<a href="https://thedalles-oregon.ompnetwork.org/api/sessions/?category=1&amp;limit=1&amp;offset=1" rel="nofollow">https://thedalles-oregon.ompnetwork.org/api/sessions/?category=1&amp;limit=1&amp;offset=1</a>&quot;,
+    &quot;previous&quot;: null,
+    &quot;results&quot;: [
+        {
+            &quot;id&quot;: 542,
+            &quot;documents&quot;: [
+                {
+                    &quot;id&quot;: 1494,
+                    &quot;type&quot;: &quot;agenda&quot;,
+                    &quot;file&quot;: &quot;<a href="https://dcwecje7bjjjc.cloudfront.net/media/16/documents/CC_2026-10-26_City_Council_Agenda.pdf" rel="nofollow">https://dcwecje7bjjjc.cloudfront.net/media/16/documents/CC_2026-10-26_City_Council_Agenda.pdf</a>&quot;,
+                    &quot;label&quot;: &quot;&quot;,
+                    &quot;link&quot;: &quot;&quot;,
+                    &quot;ext_id&quot;: &quot;&quot;,
+                    &quot;ext_agenda_item_id&quot;: &quot;&quot;,
+                    &quot;position&quot;: 0,
+                    &quot;created_at&quot;: &quot;2026-10-18T17:50:39.758861Z&quot;,
+                    &quot;updated_at&quot;: &quot;2026-10-18T18:07:51.382687Z&quot;,
+                    &quot;session&quot;: 542
+                },
+                {
+                    &quot;id&quot;: 1496,
+                    &quot;type&quot;: &quot;packet&quot;,
+                    &quot;file&quot;: &quot;<a href="https://dcwecje7bjjjc.cloudfront.net/media/16/documents/CC_2026-10-26_City_Council_Agenda_Z4o6TlC.pdf" rel="nofollow">https://dcwecje7bjjjc.cloudfront.net/media/16/documents/CC_2026-10-26_City_Council_Agenda_Z4o6TlC.pdf</a>&quot;,
+                    &quot;label&quot;: &quot;&quot;,
+                    &quot;link&quot;: &quot;&quot;,
+                    &quot;ext_id&quot;: &quot;&quot;,
+                    &quot;ext_agenda_item_id&quot;: &quot;&quot;,
+                    &quot;position&quot;: 0,
+                    &quot;created_at&quot;: &quot;2026-10-18T18:07:51.525400Z&quot;,
+                    &quot;updated_at&quot;: &quot;2026-10-18T18:07:51.525419Z&quot;,
+                    &quot;session&quot;: 542
+                }
+            ],
+            &quot;title&quot;: &quot;City Council Meeting October 26, 2026 - Livestream&quot;,
+            &quot;start_date&quot;: &quot;2026-10-27T00:30:00Z&quot;,
+            &quot;end_date&quot;: &quot;2026-10-27T03:30:00Z&quot;,
+            &quot;video_url&quot;: &quot;&quot;,
+            &quot;summary&quot;: &quot;&quot;,
+            &quot;description&quot;: &quot;&quot;,
+            &quot;is_live&quot;: false,
+            &quot;is_minutes_live&quot;: false,
+            &quot;is_index_published&quot;: true,
+            &quot;use_yt_default&quot;: true,
+            &quot;youtube_events_auto&quot;: null,
+            &quot;youtube_autostart&quot;: null,
+            &quot;youtube_autostop&quot;: null,
+            &quot;youtube_visibility&quot;: null,
+            &quot;youtube_stream_id&quot;: null,
+            &quot;archive_id&quot;: null,
+            &quot;created_at&quot;: &quot;2026-10-18T17:50:39.572038Z&quot;,
+            &quot;updated_at&quot;: &quot;2026-10-18T18:07:51.281710Z&quot;,
+            &quot;category&quot;: {
+                &quot;id&quot;: 1,
+                &quot;name&quot;: &quot;City Council Meetings&quot;,
+                &quot;livestream&quot;: true,
+                &quot;hidden&quot;: false,
+                &quot;position&quot;: -10
+            }
+        }
+    ]
+}</pre>
+              </div>
+            </div>
+
+            
+              
+
+              
+            
+          
+        </div><!-- /.content -->
+      </div><!-- /.container -->
+    </div><!-- ./wrapper -->
+
+    
+      <div class="modal fade" id="filtersModal" tabindex="-1" role="dialog" aria-labelledby="filters" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+        <h4 class="modal-title">Filters</h4>
+    </div>
+      <div class="modal-body">
+          
+          
+          
+
+
+<h2>Field filters</h2>
+
+
+<form  method="get" > <div id="div_id_category" class="mb-3"> <label for="id_category" class="form-label">
+                Category
+            </label> <select name="category" class="select form-select" id="id_category"> <option value="">---------</option> <option value="1" selected>Category object (1)</option> <option value="2">Category object (2)</option> <option value="3">Category object (3)</option> <option value="4">Category object (4)</option> <option value="5">Category object (5)</option>
+
+</select> </div> <div id="div_id_start_date__year" class="mb-3"> <label for="id_start_date__year" class="form-label">
+                Start date year
+            </label> <input type="number" name="start_date__year" step="any" class="numberinput form-control" id="id_start_date__year"> </div> <div id="div_id_is_live" class="mb-3"> <label for="id_is_live" class="form-label">
+                Is live
+            </label> <select name="is_live" class="booleanwidget form-select" id="id_is_live"> <option value="" selected>Unknown</option> <option value="true">Yes</option> <option value="false">No</option>
+
+</select> </div> <div id="div_id_category__livestream" class="mb-3"> <label for="id_category__livestream" class="form-label">
+                Category livestream
+            </label> <select name="category__livestream" class="booleanwidget form-select" id="id_category__livestream"> <option value="" selected>Unknown</option> <option value="true">Yes</option> <option value="false">No</option>
+
+</select> </div> <input type="submit"
+    name=""
+    value="Submit"
+    
+        class="btn btn-primary btn-default"
+        id="submit-id-"
+    
+    
+    /> </form>
+
+
+          
+          <hr/>
+          
+<h2>Search</h2>
+<form class="form-inline">
+  <div class="form-group">
+    <div class="input-group">
+      <input type="text" class="form-control" style="width: 350px" name="search" value="">
+      <span class="input-group-btn">
+        <button class="btn btn-default" type="submit"><span class="glyphicon glyphicon-search" aria-hidden="true"></span> Search</button>
+      </span>
+    </div>
+  </div>
+</form>
+
+          
+          <hr/>
+          
+
+<h2>Ordering</h2>
+<div class="list-group">
+    
+        
+            <a href="/api/sessions/?category=1&amp;limit=1&amp;ordering=start_date" class="list-group-item">start_date - ascending</a>
+        
+    
+        
+            <a href="/api/sessions/?category=1&amp;limit=1&amp;ordering=-start_date" class="list-group-item active">
+                <span class="glyphicon glyphicon-ok" style="float: right" aria-hidden="true"></span> start_date - descending
+            </a>
+        
+    
+</div>
+
+          
+      </div>
+    </div>
+  </div>
+</div>
+
+    
+
+    
+      <script>
+        window.drf = {
+          csrfHeaderName: "X-CSRFTOKEN",
+          csrfToken: "REDACTED"
+        };
+      </script>
+      <script src="https://dcwecje7bjjjc.cloudfront.net/static/rest_framework/js/jquery-3.5.1.min.js"></script>
+      <script src="https://dcwecje7bjjjc.cloudfront.net/static/rest_framework/js/ajax-form.js"></script>
+      <script src="https://dcwecje7bjjjc.cloudfront.net/static/rest_framework/js/csrf.js"></script>
+      <script src="https://dcwecje7bjjjc.cloudfront.net/static/rest_framework/js/bootstrap.min.js"></script>
+      <script src="https://dcwecje7bjjjc.cloudfront.net/static/rest_framework/js/prettify-min.js"></script>
+      <script src="https://dcwecje7bjjjc.cloudfront.net/static/rest_framework/js/default.js"></script>
+      <script>
+        $(document).ready(function() {
+          $('form').ajaxForm();
+        });
+      </script>
+    
+
+  </body>
+  
+</html>

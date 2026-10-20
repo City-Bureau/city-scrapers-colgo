@@ -137,6 +137,19 @@ def test_postponed_status_is_cancelled():
     assert parse(data)[nov_19]["status"] == CANCELLED
 
 
+def test_cancel_note_only_on_cancelled_meetings():
+    nov_19 = datetime(2026, 11, 19, 17, 30)
+    youtube = "viewed live on YouTube."
+    data = replace_in_event(
+        fixture, nov_19, youtube, f"{youtube} The October 15 meeting is cancelled."
+    )
+    items = parse(data)
+    assert items[nov_19]["status"] == TENTATIVE
+    assert items[nov_19]["time_notes"].startswith("Please refer to the meeting")
+    oct_15 = items[datetime(2026, 10, 15, 17, 30)]
+    assert oct_15["time_notes"] == "Meeting has been cancelled"
+
+
 def test_rescheduled_title_does_not_cancel():
     nov_19 = datetime(2026, 11, 19, 17, 30)
     data = with_title_suffix(fixture, nov_19, " – Rescheduled from November 5")

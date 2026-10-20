@@ -17,10 +17,13 @@ import scrapy
 from city_scrapers_core.constants import (
     ADVISORY_COMMITTEE,
     BOARD,
+    CANCELLED,
     CITY_COUNCIL,
     COMMISSION,
     COMMITTEE,
     NOT_CLASSIFIED,
+    PASSED,
+    TENTATIVE,
 )
 from city_scrapers_core.items import Meeting
 from city_scrapers_core.spiders import CityScrapersSpider
@@ -528,7 +531,6 @@ class ColgoHoodRiverCityMixin(
                 start=start,
                 end=self._parse_end(event),
                 all_day=self._parse_all_day(event),
-                time_notes=self._parse_time_notes(event),
                 location=self._parse_location(event),
                 links=self._parse_links(event),
                 source=self._parse_source(response),
@@ -539,6 +541,7 @@ class ColgoHoodRiverCityMixin(
             meeting["status"] = self._get_status(
                 meeting, event, self._lookup_event_status(event, status_map)
             )
+            meeting["time_notes"] = self._parse_time_notes(event, meeting["status"])
             meeting["id"] = self._get_id(meeting)
             self._meetings_parsed += 1
 
@@ -667,12 +670,14 @@ class ColgoHoodRiverCityMixin(
                 pass
         return None
 
-    def _parse_time_notes(self, item):
+    def _parse_time_notes(self, item, status):
         """Capture useful notes about timing or cancellation."""
 
-        # Detect cancellation
+        # Event text can mention other meetings' cancellations, so follow status
         event_html = (item.get() or "").lower()
-        is_cancelled = ("cancelled" in event_html) or ("canceled" in event_html)
+        is_cancelled = status == CANCELLED and (
+            "cancelled" in event_html or "canceled" in event_html
+        )
 
         if is_cancelled:
             notes = []
@@ -1258,8 +1263,6 @@ class ColgoHoodRiverCityMixin(
         Returns:
             str: Status constant (CANCELLED, PASSED, or TENTATIVE)
         """
-        from city_scrapers_core.constants import CANCELLED, PASSED, TENTATIVE
-
         # Staff sometimes cancel a meeting by renaming it ("... - Cancelled")
         # while EventON's status stays "scheduled" (63 such events, mostly
         # 2021-2024), so an explicit cancellation in the raw title wins.

@@ -85,10 +85,9 @@ def test_falls_back_to_markup_without_json():
     assert items[datetime(2026, 11, 19, 17, 30)]["status"] == TENTATIVE
 
 
-def with_title_suffix(data, start, suffix):
-    """Append a suffix to the calendar title of the event starting at start."""
-    data = json.loads(json.dumps(data))
-    target = next(
+def event_at(data, start):
+    """The "json" entry of the event starting at start."""
+    return next(
         e
         for e in data["json"].values()
         # EventON stores local wall-clock time as if it were UTC.
@@ -97,13 +96,22 @@ def with_title_suffix(data, start, suffix):
         )
         == start
     )
+
+
+def replace_in_event(data, start, old, new):
+    """Replace the first old with new in the HTML of the event starting at start."""
+    data = json.loads(json.dumps(data))
+    target = event_at(data, start)
     marker = f'id="event_{target["event_id"]}_{target["ri"]}"'
     head, tail = data["html"].split(marker, 1)
-    title = "Urban Renewal Advisory Committee Meeting</span>"
-    data["html"] = (
-        head + marker + tail.replace(title, title[:-7] + suffix + "</span>", 1)
-    )
+    data["html"] = head + marker + tail.replace(old, new, 1)
     return data
+
+
+def with_title_suffix(data, start, suffix):
+    """Append a suffix to the calendar title of the event starting at start."""
+    title = "Urban Renewal Advisory Committee Meeting</span>"
+    return replace_in_event(data, start, title, title[:-7] + suffix + "</span>")
 
 
 def test_cancelled_title_overrides_scheduled_status():
@@ -114,6 +122,19 @@ def test_cancelled_title_overrides_scheduled_status():
     items = parse(data)
     assert items[nov_19]["status"] == CANCELLED
     assert items[datetime(2026, 12, 17, 17, 30)]["status"] == TENTATIVE
+
+
+def test_postponed_title_is_cancelled():
+    nov_19 = datetime(2026, 11, 19, 17, 30)
+    data = with_title_suffix(fixture, nov_19, " – Postponed")
+    assert parse(data)[nov_19]["status"] == CANCELLED
+
+
+def test_postponed_status_is_cancelled():
+    nov_19 = datetime(2026, 11, 19, 17, 30)
+    data = json.loads(json.dumps(fixture))
+    event_at(data, nov_19)["event_pmv"]["_status"] = ["postponed"]
+    assert parse(data)[nov_19]["status"] == CANCELLED
 
 
 def test_rescheduled_title_does_not_cancel():

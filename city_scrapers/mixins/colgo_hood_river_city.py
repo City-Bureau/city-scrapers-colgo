@@ -1304,13 +1304,13 @@ class ColgoHoodRiverCityMixin(
                 if "cancelled" in event_text or "canceled" in event_text:
                     return CANCELLED
 
-        # The core helper treats "rescheduled" anywhere in the title as
-        # cancelled. On this calendar a "Rescheduled from <date>" or
-        # "Originally Scheduled for <date>" title marks the new, active
-        # meeting (the old date is a separate cancelled event), so strip
-        # those phrases before falling back to the date-based status.
+        # On this calendar "Rescheduled from <date>" marks the new, active
+        # meeting (the old date is a separate cancelled event). Core already
+        # ignores "Rescheduled from" (city-scrapers-core#43), but not when a
+        # "to" follows it ("Rescheduled from Sept. 10 to Oct. 21"), which it
+        # keeps as a cancel signal. Strip it here so that case stays active.
         title = re.sub(
-            r"\b(rescheduled|moved)\s+from\b|\boriginally\s+scheduled\b",
+            r"\brescheduled\s+from\b",
             "",
             meeting.get("title", ""),
             flags=re.IGNORECASE,

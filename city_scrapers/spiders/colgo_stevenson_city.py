@@ -1,6 +1,8 @@
 """
 City of Stevenson, WA
-This spider crawls the meetings page for the City of Stevenson, Washington.
+These spiders read meetings for the City of Stevenson, Washington from the
+CivicClerk API (category IDs from
+https://stevensonwa.api.civicclerk.com/v1/EventCategories).
 """
 
 from city_scrapers.mixins.colgo_stevenson_city import ColgoStevensonCitySpiderMixin
@@ -18,7 +20,7 @@ spider_configs = [
         "name": "colgo_stevenson_city_council",
         "agency": "Stevenson City Council",
         "board_name": "City Council",
-        "board_id": 27,
+        "category_id": 26,
         "location": default_location,
         "description": "With the exception of executive session meetings, Council meetings are open to the public, with opportunity for the public to speak. For all comments and testimony, speakers are asked to limit statements to about three minutes in order to allow as many people as possible the chance to address Council.",  # noqa
     },
@@ -27,7 +29,7 @@ spider_configs = [
         "name": "colgo_stevenson_planning",
         "agency": "Stevenson Planning Commission",
         "board_name": "Planning Commission",
-        "board_id": 28,
+        "category_id": 27,
         "location": default_location,
         "description": "Commission meetings are open to the public, with opportunity for the public to speak. For all comments and testimony, speakers are asked to limit statements to about three minutes in order to allow as many people as possible the chance to address Commission.",  # noqa
     },

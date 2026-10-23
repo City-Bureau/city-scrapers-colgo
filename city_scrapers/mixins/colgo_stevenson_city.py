@@ -1,5 +1,22 @@
-import re
-from datetime import datetime, timedelta
+"""
+Mixin for City of Stevenson, WA meetings.
+
+In 2026 Stevenson replaced its Drupal site (www.ci.stevenson.wa.us, which now
+redirects to www.stevensonwa.gov, where /meetings returns 404). Its Agendas &
+Minutes page (https://www.stevensonwa.gov/1391/Agendas-Minutes) now embeds the
+CivicClerk portal https://stevensonwa.portal.civicclerk.com, which reads the
+public CivicClerk API:
+
+    https://stevensonwa.api.civicclerk.com/v1/Events?$filter=categoryId eq N
+
+Category IDs are listed at https://stevensonwa.api.civicclerk.com/v1/EventCategories.
+
+A response that is not the Events JSON raises StevensonApiError. Failed requests,
+or a finished run with no meetings, are reported once at close through the
+spider_error signal, which reaches Sentry.
+"""
+
+from datetime import datetime
 from urllib.parse import urlencode
 
 import scrapy
@@ -12,6 +29,12 @@ from city_scrapers_core.constants import (
 )
 from city_scrapers_core.items import Meeting
 from city_scrapers_core.spiders import CityScrapersSpider
+from scrapy import signals
+from twisted.python.failure import Failure
+
+
+class StevensonApiError(Exception):
+    """The CivicClerk Events API could not be read, so meetings would be missed."""
 
 
 class ColgoStevensonCitySpiderMixinMeta(type):
@@ -27,6 +50,7 @@ class ColgoStevensonCitySpiderMixinMeta(type):
                 "agency",
                 "name",
                 "board_name",
+                "category_id",
                 "location",
                 "description",
             ]
@@ -46,165 +70,210 @@ class ColgoStevensonCitySpiderMixin(
     CityScrapersSpider, metaclass=ColgoStevensonCitySpiderMixinMeta
 ):
     """
-    Mixin class for Stevenson, WA city meetings.
+    Mixin class for Stevenson, WA city meetings, read from CivicClerk.
     """
 
     board_name = None
     location = None
-    board_id = 27  # Default board ID (City Council), can be overridden in spider config
+    category_id = None
 
     timezone = "America/Los_Angeles"
-    base_url = "https://www.ci.stevenson.wa.us/meetings"
+    api_base = "https://stevensonwa.api.civicclerk.com/v1"
+    portal_base = "https://stevensonwa.portal.civicclerk.com"
+
+    # CivicClerk category ID -> classification
+    classifications = {26: CITY_COUNCIL, 27: COMMISSION}
+
+    # Guard against an @odata.nextLink that never ends.
+    max_pages = 100
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._pages = 0
+        self._meetings_parsed = 0
+        self._failed_requests = 0
+
+    @classmethod
+    def from_crawler(cls, crawler, *args, **kwargs):
+        spider = super().from_crawler(crawler, *args, **kwargs)
+        crawler.signals.connect(spider._on_spider_closed, signal=signals.spider_closed)
+        return spider
+
+    @property
+    def api_url(self):
+        params = {
+            "$filter": f"categoryId eq {self.category_id}",
+            "$orderby": "startDateTime desc",
+        }
+        return f"{self.api_base}/Events?{urlencode(params)}"
 
     def start_requests(self):
-        """
-        Generate initial request with date filter parameters.
-        Fetches all past, current, and upcoming meetings by setting a wide date range.
-        """
+        yield self._request(self.api_url)
 
-        # Set start date to capture all historical meetings
-        start_date = datetime(2018, 1, 1)
-
-        # Set end date to 2 years in the future to capture all upcoming meetings
-        end_date = datetime.now() + timedelta(days=365 * 2)
-
-        # Build URL with date filters using the board_id
-        params = {
-            "date_filter[value][month]": start_date.month,
-            "date_filter[value][day]": start_date.day,
-            "date_filter[value][year]": start_date.year,
-            "date_filter_1[value][month]": end_date.month,
-            "date_filter_1[value][day]": end_date.day,
-            "date_filter_1[value][year]": end_date.year,
-            "field_microsite_tid": "All",
-            "field_microsite_tid_1": self.board_id,
-        }
-
-        url = f"{self.base_url}/?{urlencode(params)}"
-
-        yield scrapy.Request(url, callback=self.parse)
+    def _request(self, url):
+        self._pages += 1
+        return scrapy.Request(
+            url,
+            headers={"Accept": "application/json"},
+            callback=self.parse,
+            errback=self._request_failed,
+        )
 
     def parse(self, response):
-        meetings = response.css("tr.even, tr.odd")
-        if not meetings:
-            self.logger.warning(f"No meetings found at {response.url}")
-        else:
-            for item in meetings:
-                meeting = Meeting(
-                    title=self._parse_title(item),
-                    description=self.description,
-                    classification=self._parse_classification(),
-                    start=self._parse_start(item),
-                    end=None,
-                    all_day=False,
-                    time_notes="",
-                    location=self.location,
-                    links=self._parse_links(item, response),
-                    source=self._parse_source(response),
+        """
+        Parse one page of CivicClerk events and follow ``@odata.nextLink``.
+
+        Raises:
+            StevensonApiError: the response is not the Events JSON.
+        """
+        data = self._load_json(response)
+
+        for event in data["value"]:
+            if str(event.get("categoryId")) != str(self.category_id):
+                continue
+            if event.get("isDeleted"):
+                continue
+            title = self._parse_title(event)
+            meeting = Meeting(
+                title=title,
+                description=self.description,
+                classification=self._parse_classification(),
+                start=self._parse_start(event),
+                end=None,
+                all_day=False,
+                time_notes="",
+                location=self.location,
+                links=self._parse_links(event),
+                source=self._parse_source(event),
+            )
+            meeting["status"] = self._get_status(
+                meeting, text=event.get("eventDescription") or ""
+            )
+            meeting["id"] = self._get_id(meeting)
+            self._meetings_parsed += 1
+            yield meeting
+
+        next_url = data.get("@odata.nextLink")
+        if next_url:
+            if self._pages >= self.max_pages:
+                raise StevensonApiError(
+                    f"{self.name}: stopped after {self._pages} pages; "
+                    f"next={next_url}"
                 )
-                meeting["status"] = self._get_status(meeting)
-                meeting["id"] = self._get_id(meeting)
-                yield meeting
+            yield self._request(next_url)
 
-        # pagination
-        next_page = response.css(
-            ".pager-next a::attr(href), .pager__item--next a::attr(href)"
-        ).get()
-        if next_page:
-            yield scrapy.Request(response.urljoin(next_page), callback=self.parse)
+    def _load_json(self, response):
+        content_type = response.headers.get("Content-Type", b"").decode(
+            "latin-1", "replace"
+        )
+        try:
+            data = response.json()
+        except (ValueError, AttributeError) as exc:
+            snippet = " ".join(response.text[:80].split())
+            raise StevensonApiError(
+                f"{self.name}: CivicClerk API did not return JSON "
+                f"(status={response.status}, content-type={content_type!r}, "
+                f"url={response.url}, starts={snippet!r})"
+            ) from exc
+        if not isinstance(data, dict) or not isinstance(data.get("value"), list):
+            raise StevensonApiError(
+                f"{self.name}: CivicClerk API JSON has no 'value' list "
+                f"(url={response.url})"
+            )
+        return data
 
-    def _parse_title(self, item):
+    def _request_failed(self, failure):
+        self._failed_requests += 1
+        self.logger.warning(f"CivicClerk request failed: {failure.value!r}")
+
+    def _on_spider_closed(self, spider, reason):
+        """Report one error per run if requests failed or no meetings were found."""
+        problems = []
+        if self._failed_requests:
+            problems.append(f"{self._failed_requests} failed CivicClerk request(s)")
+        if reason == "finished" and self._meetings_parsed == 0:
+            problems.append("0 meetings parsed")
+        if not problems:
+            return
+        self._report_error(
+            StevensonApiError(
+                f"{self.name}: {'; '.join(problems)} "
+                f"(finish_reason={reason}, pages={self._pages}, "
+                f"meetings={self._meetings_parsed})"
+            )
+        )
+
+    def _report_error(self, exc):
         """
-        Remove leading date information from the title.
-        Preserve the original title text exactly otherwise.
+        Report an error outside a callback the way Scrapy reports callback
+        errors: ERROR log, spider_exceptions stat, and the spider_error signal
+        that scrapy_sentry_errors.extensions.Errors forwards to Sentry.
         """
-        title = item.css("td.views-field-title::text, .views-field-title::text").get()
+        self.logger.error(str(exc))
+        self.crawler.stats.inc_value(
+            f"spider_exceptions/{exc.__class__.__name__}", spider=self
+        )
+        self.crawler.signals.send_catch_log(
+            signal=signals.spider_error,
+            failure=Failure(exc),
+            response=None,
+            spider=self,
+        )
 
-        title = title.strip() if title else ""
-
-        # Remove date patterns from the beginning of the title
-        date_patterns = [
-            # Pattern 1: "DayOfWeek, Month DD-" - e.g., "Wednesday, February 5-"
-            r"^(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\s+[A-Za-z]+\s+\d{1,2}\s*-\s*",  # noqa
-            # Pattern 2: "Month DD & DD " - e.g., "May 27 & 28 "
-            r"^[A-Za-z]+\s+\d{1,2}\s*&\s*\d{1,2}\s+",
-            # Pattern 3: "Month DD-DD, YYYY " - e.g., "October 19-20, 2018 "
-            r"^[A-Za-z]+\s+\d{1,2}\s*-\s*\d{1,2},?\s+\d{4}\s+",
-            # Pattern 4: "Month DDth/nd/rd/st "
-            r"^[A-Za-z]+\s+\d{1,2}(?:st|nd|rd|th)\s+",
-            # Pattern 5: "Month DDth/nd/rd/st, YYYY "
-            r"^[A-Za-z]+\s+\d{1,2}(?:st|nd|rd|th),?\s+\d{4}\s+",
-            # Pattern 6: "Month DD, YYYY " or "Month DD, YYYY - "
-            r"^[A-Za-z]+\s+\d{1,2},\s+\d{4}\s*-?\s*",
-            # Pattern 7: "Month DD-" - e.g., "February 25-"
-            r"^[A-Za-z]+\s+\d{1,2}\s*-\s*",
-            # Pattern 8: "Month YYYY " - e.g., "January 2026 ", "July 2022 "
-            r"^[A-Za-z]+\s+\d{4}\s+",
-        ]
-
-        for pattern in date_patterns:
-            title = re.sub(pattern, "", title)
-
-        title = title.strip()
-
-        return title
+    def _parse_title(self, event):
+        return (event.get("eventName") or "").strip() or self.agency
 
     def _parse_classification(self):
+        return self.classifications.get(int(self.category_id), NOT_CLASSIFIED)
+
+    def _parse_start(self, event):
         """
-        Parse or generate classification based on board_id:
-        board_id 27 = City Council, board_id 28 = Commission
+        CivicClerk stores the local wall-clock time with a "Z" suffix: the
+        portal shows "6:00 PM PDT" and the agenda "6:00 PM" for
+        "2026-10-15T18:00:00Z". Return it as a naive local datetime.
         """
-
-        if self.board_id == 27:
-            return CITY_COUNCIL
-        elif self.board_id == 28:
-            return COMMISSION
-        else:
-            return NOT_CLASSIFIED
-
-    def _parse_start(self, item):
-        """Parse start datetime as a naive datetime object."""
-        # Extract ISO timestamp from content attribute (includes date and time)
-        date_elem = item.css("span[property='dc:date']::attr(content)").get()
-
-        if date_elem:
-            return self._parse_datetime(date_elem.strip())
-
-        return None
-
-    def _parse_datetime(self, date_str):
-        """
-        Parse ISO datetime string into a naive datetime object.
-        Handles ISO 8601 format with timezone information.
-        """
-        try:
-            date_str = date_str.strip()
-
-            # Parse ISO format (e.g., "2026-01-15T18:00:00-08:00")
-            if "T" in date_str:
-                dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-                return dt.replace(tzinfo=None)
-
+        value = event.get("startDateTime") or event.get("eventDate")
+        if not value:
             return None
-
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(
+                tzinfo=None
+            )
         except ValueError:
             return None
 
-    def _parse_links(self, item, response):
-        """
-        Parse links from table columns and assign correct titles.
-        """
-        headers = ["Agenda", "Agenda Packet", "Minutes", "Video"]
+    def _parse_links(self, event):
         links = []
-        cells = item.css("td")
-
-        # Map table column links to headers
-        for header, cell in zip(headers, cells[2:]):  # links start at 3rd td
-            href = cell.css("a::attr(href)").get()
-            if href:
-                links.append({"href": response.urljoin(href), "title": header})
-
+        for doc in sorted(
+            event.get("publishedFiles") or [], key=lambda d: d.get("sort") or 0
+        ):
+            file_id = doc.get("fileId")
+            if not file_id:
+                continue
+            links.append(
+                {
+                    "href": (
+                        f"{self.api_base}/Meetings/GetMeetingFileStream"
+                        f"(fileId={file_id},plainText=false)"
+                    ),
+                    "title": (doc.get("type") or doc.get("name") or "Document").strip(),
+                }
+            )
+        media_url = (event.get("externalMediaUrl") or "").strip()
+        if media_url:
+            links.append({"href": media_url, "title": "Video"})
+        youtube_id = (event.get("youtubeVideoId") or "").strip()
+        if youtube_id and not media_url:
+            links.append(
+                {
+                    "href": f"https://www.youtube.com/watch?v={youtube_id}",
+                    "title": "Video",
+                }
+            )
         return links
+
+    def _parse_source(self, event):
+        return f"{self.portal_base}/event/{event['id']}/files"
 
     def _get_status(self, meeting, text=""):
         combined_text = f"{meeting.get('title', '')} {text}".lower()
@@ -221,7 +290,3 @@ class ColgoStevensonCitySpiderMixin(
             return PASSED
 
         return super()._get_status(meeting, text)
-
-    def _parse_source(self, response):
-        """Parse or generate source."""
-        return response.url

@@ -5,7 +5,17 @@ This mixin scrapes meeting data from the City of White Salmon government website
 using CSS selectors on their Drupal calendar.
 
 Calendar URL:
-    https://www.whitesalmonwa.gov/calendar/month/{YYYY-MM}?field_microsite_tid=All&field_microsite_tid_1={agency_id}
+    https://legacywhitesalmonwa.teammunicode.com/calendar/month/{YYYY-MM}?field_microsite_tid=All&field_microsite_tid_1={agency_id}
+
+In 2026 the city moved www.whitesalmonwa.gov to CivicPlus, where the old
+calendar URLs return 404. The Drupal site still runs on the legacy host, and the
+city's own Agendas & Minutes page (https://www.whitesalmonwa.gov/186/Agendas-Minutes)
+embeds https://legacywhitesalmonwa.teammunicode.com/meetings, so that is where
+meetings are published for now.
+
+If every calendar page fails, a meeting page fails, or a finished run finds no
+meetings, the spider reports a WhiteSalmonSourceError through the spider_error
+signal (which reaches Sentry) instead of finishing quietly with no items.
 
 Required class variables (enforced by __init_subclass__):
     name (str): Spider name/slug (e.g., "colgo_white_salmon_city_council")
@@ -30,6 +40,12 @@ import scrapy
 from city_scrapers_core.items import Meeting
 from city_scrapers_core.spiders import CityScrapersSpider
 from dateutil.relativedelta import relativedelta
+from scrapy import signals
+from twisted.python.failure import Failure
+
+
+class WhiteSalmonSourceError(Exception):
+    """The White Salmon calendar could not be read, so meetings would be missed."""
 
 
 class WhiteSalmonMixin(CityScrapersSpider):
@@ -79,7 +95,7 @@ class WhiteSalmonMixin(CityScrapersSpider):
     # Configuration
     timezone = "America/Los_Angeles"
     calendar_url = (
-        "https://www.whitesalmonwa.gov/calendar/month/{month}"
+        "https://legacywhitesalmonwa.teammunicode.com/calendar/month/{month}"
         "?field_microsite_tid=All&field_microsite_tid_1={agency_id}"
     )
 
@@ -105,6 +121,19 @@ class WhiteSalmonMixin(CityScrapersSpider):
     # Number of months to scrape into the future
     months_ahead = 12
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._calendar_requested = 0
+        self._calendar_ok = 0
+        self._failed_requests = 0
+        self._meetings_parsed = 0
+
+    @classmethod
+    def from_crawler(cls, crawler, *args, **kwargs):
+        spider = super().from_crawler(crawler, *args, **kwargs)
+        crawler.signals.connect(spider._on_spider_closed, signal=signals.spider_closed)
+        return spider
+
     def start_requests(self):
         """
         Generate requests for past years and upcoming months.
@@ -125,7 +154,10 @@ class WhiteSalmonMixin(CityScrapersSpider):
             target_date = start_date + relativedelta(months=i)
             month_str = target_date.strftime("%Y-%m")
             url = self.calendar_url.format(month=month_str, agency_id=self.agency_id)
-            yield scrapy.Request(url=url, callback=self.parse)
+            self._calendar_requested += 1
+            yield scrapy.Request(
+                url=url, callback=self.parse, errback=self._request_failed
+            )
 
     def parse(self, response):
         """
@@ -137,6 +169,7 @@ class WhiteSalmonMixin(CityScrapersSpider):
         Yields:
             Request: Requests to individual meeting detail pages
         """
+        self._calendar_ok += 1
         # Each calendar item contains the meeting link and its datetime
         for item in response.css(".view-item-calendar"):
             link = item.css(".views-field-title a::attr(href)").get()
@@ -157,7 +190,11 @@ class WhiteSalmonMixin(CityScrapersSpider):
 
             full_url = response.urljoin(link)
             yield scrapy.Request(
-                url=full_url, callback=self.parse_meeting, meta=meta, dont_filter=True
+                url=full_url,
+                callback=self.parse_meeting,
+                errback=self._request_failed,
+                meta=meta,
+                dont_filter=True,
             )
 
     def parse_meeting(self, response):
@@ -193,7 +230,48 @@ class WhiteSalmonMixin(CityScrapersSpider):
         meeting["status"] = self._get_status(meeting, text=title)
         meeting["id"] = self._get_id(meeting)
 
+        self._meetings_parsed += 1
         yield meeting
+
+    def _request_failed(self, failure):
+        """A calendar or meeting page that could not be downloaded."""
+        self._failed_requests += 1
+        self.logger.warning(f"Request failed: {failure.value!r}")
+
+    def _on_spider_closed(self, spider, reason):
+        """Report one error per run if pages failed or no meetings were found."""
+        problems = []
+        if self._failed_requests:
+            problems.append(f"{self._failed_requests} failed request(s)")
+        if reason == "finished" and self._meetings_parsed == 0:
+            problems.append("0 meetings parsed")
+        if not problems:
+            return
+        self._report_error(
+            WhiteSalmonSourceError(
+                f"{self.name}: {'; '.join(problems)} "
+                f"(finish_reason={reason}, "
+                f"calendar pages ok={self._calendar_ok}/{self._calendar_requested}, "
+                f"meetings={self._meetings_parsed})"
+            )
+        )
+
+    def _report_error(self, exc):
+        """
+        Report an error outside a callback the way Scrapy reports callback
+        errors: ERROR log, spider_exceptions stat, and the spider_error signal
+        that scrapy_sentry_errors.extensions.Errors forwards to Sentry.
+        """
+        self.logger.error(str(exc))
+        self.crawler.stats.inc_value(
+            f"spider_exceptions/{exc.__class__.__name__}", spider=self
+        )
+        self.crawler.signals.send_catch_log(
+            signal=signals.spider_error,
+            failure=Failure(exc),
+            response=None,
+            spider=self,
+        )
 
     def _parse_title(self, response):
         """Extract meeting title from page."""

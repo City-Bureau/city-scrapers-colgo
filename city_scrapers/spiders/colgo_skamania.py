@@ -45,10 +45,11 @@ spider_configs = [
         "class_name": "SkamaniaEmsbSpider",
         "mixin": SkamaniaEMSMixin,
         "name": "colgo_ska_emsb",
-        "agency": "Skamania County Public Hospital District #1 (EMS & Rescue) Board of Commmissioners",
+        "agency": "Skamania County Public Hospital District #1 (EMS & Rescue) Board of Commmissioners",  # noqa
         "agenda_param": "",
         "time_notes": "",
         "start_time": time(10, 0),
+        "is_main": True,
     },
 ]
 
@@ -81,7 +82,7 @@ def create_spiders():
 
         except Exception as e:
             logger.warning(
-                f"Failed to create spider class {config.get('class_name', 'Unknown')}: {e}"
+                f"Failed to create spider class {config.get('class_name', 'Unknown')}: {e}"  # noqa
             )
 
 

@@ -45,7 +45,7 @@ spider_configs = [
         "class_name": "SkamaniaEmsbSpider",
         "mixin": SkamaniaEMSMixin,
         "name": "colgo_ska_emsb",
-        "agency": "Skamania County Public Hospital District #1 (EMS & Rescue) Board of Commmissioners",  # noqa
+        "agency": "Skamania County Public Hospital District #1 (EMS & Rescue) Board of Commissioners",  # noqa
         "agenda_param": "",
         "time_notes": "",
         "start_time": time(10, 0),
@@ -60,30 +60,24 @@ def create_spiders():
     and register them in the global namespace.
     """
     for config in spider_configs:
-        try:
-            class_name = config["class_name"]
+        class_name = config["class_name"]
 
-            if class_name not in globals():
-                mixin = config["mixin"]
-                # Build attributes dict, dropping factory-only keys.
-                # This is done to avoid passing keys that are only
-                # used for the factory function to the class constructor.
-                attrs = {k: v for k, v in config.items() if k not in _META_KEYS}
+        if class_name not in globals():
+            mixin = config["mixin"]
+            # Build attributes dict, dropping factory-only keys.
+            # This is done to avoid passing keys that are only
+            # used for the factory function to the class constructor.
+            attrs = {k: v for k, v in config.items() if k not in _META_KEYS}
 
-                # Dynamically create the spider class
-                spider_class = type(
-                    class_name,
-                    (mixin,),
-                    attrs,
-                )
-
-                # Register the class in the global namespace using its class_name
-                globals()[class_name] = spider_class
-
-        except Exception as e:
-            logger.warning(
-                f"Failed to create spider class {config.get('class_name', 'Unknown')}: {e}"  # noqa
+            # Dynamically create the spider class
+            spider_class = type(
+                class_name,
+                (mixin,),
+                attrs,
             )
+
+            # Register the class in the global namespace using its class_name
+            globals()[class_name] = spider_class
 
 
 # Create all spider classes at module load

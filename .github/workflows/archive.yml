@@ -1,8 +1,9 @@
 name: Archive
 
+# GitHub runs this schedule as whoever last changed the cron value; a comment-only edit doesn't re-register it.
 on:
   schedule:
-    - cron: "7 11 * * *"
+    - cron: "9 11 * * *"
   workflow_dispatch:
 
 env:
@@ -62,3 +63,11 @@ jobs:
         run: |
           export PYTHONPATH=$(pwd):$PYTHONPATH
           ./.deploy.sh
+
+  workflow-keepalive:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - uses: liskin/gh-workflow-keepalive@v1

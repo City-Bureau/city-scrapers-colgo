@@ -1,8 +1,9 @@
 name: Cron
 
+# GitHub runs this schedule as whoever last changed the cron value; a comment-only edit doesn't re-register it.
 on:
   schedule:
-    - cron: "1 6 * * *"
+    - cron: "3 6 * * *"
   workflow_dispatch:
 
 env:
@@ -74,3 +75,11 @@ jobs:
         run: |
           export PYTHONPATH=$(pwd):$PYTHONPATH
           pipenv run scrapy combinefeeds -s LOG_ENABLED=False
+
+  workflow-keepalive:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - uses: liskin/gh-workflow-keepalive@v1

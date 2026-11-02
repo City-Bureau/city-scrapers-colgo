@@ -20,7 +20,7 @@ class SkamaniaCountyMixinMeta(type):
             "name",
             "agenda_param",
             "time_notes",
-            "_start_time",
+            "start_time",
         ]
         missing_vars = [var for var in required_static_vars if var not in dct]
 
@@ -39,7 +39,7 @@ class SkamaniaCountyMixin(CityScrapersSpider, metaclass=SkamaniaCountyMixinMeta)
     agency = None
     agenda_param = None
     time_notes = ""
-    _start_time = datetime.min.time()
+    start_time = datetime.min.time()
 
     timezone = "America/Los_Angeles"
 
@@ -57,6 +57,11 @@ class SkamaniaCountyMixin(CityScrapersSpider, metaclass=SkamaniaCountyMixinMeta)
 
     _seen_dates = set()
     _folder_year = None
+
+    _location = {
+        "name": "Skamania County Courthouse",
+        "address": "240 NW Vancouver Ave., Stevenson, WA 98648",
+    }
 
     def start_requests(self):
         self._seen_dates = set()
@@ -104,7 +109,7 @@ class SkamaniaCountyMixin(CityScrapersSpider, metaclass=SkamaniaCountyMixinMeta)
                             end=None,
                             all_day=False,
                             time_notes=self.time_notes,
-                            location=self.location,
+                            location=self._location,
                             links=[
                                 {
                                     "href": href,
@@ -143,4 +148,4 @@ class SkamaniaCountyMixin(CityScrapersSpider, metaclass=SkamaniaCountyMixinMeta)
         return meetings if meetings else []
 
     def _parse_start(self, date):
-        return datetime.combine(date, self._start_time)
+        return datetime.combine(date, self.start_time)

@@ -8,6 +8,7 @@ from city_scrapers_core.utils import file_response
 from freezegun import freeze_time
 from scrapy.http import HtmlResponse
 
+from city_scrapers.mixins.colgo_skamania_ems import SkamaniaEMSCalendarError
 from city_scrapers.spiders.colgo_skamania import SkamaniaEmsbSpider
 
 
@@ -194,6 +195,25 @@ def test_future_year_table(spider):
         datetime(2027, 1, 25, 10, 0),
     ]
     assert items[1]["description"] == "Adjusted for MLK Day"
+
+
+def _schedule_response(spider, cells):
+    body = f"<p><strong>2026</strong></p><table><tr>{cells}</tr></table>"
+    return HtmlResponse(url=spider.calendar_url, body=body.encode(), encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "cell, message",
+    [
+        ("<td>TBD<br />*Budget Workshop</td>", "no meeting date"),
+        ("<td>Smarch 40</td>", "could not parse meeting date"),
+    ],
+)
+def test_cell_without_date_fails_loudly(spider, cell, message):
+    response = _schedule_response(spider, f"<td>June 15</td>{cell}")
+    with freeze_time("2026-10-29"):
+        with pytest.raises(SkamaniaEMSCalendarError, match=message):
+            list(spider.parse(response))
 
 
 def test_parse_file_date(spider):

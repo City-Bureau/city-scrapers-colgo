@@ -16,6 +16,10 @@ REAL_UA = (
 )
 
 
+class SkamaniaEMSCalendarError(Exception):
+    """A meeting schedule cell has no readable date, so meetings would be missed."""
+
+
 class SkamaniaEMSMixin(CityScrapersSpider, metaclass=SkamaniaCountyMixinMeta):
     name = None
     agency = None
@@ -159,7 +163,7 @@ class SkamaniaEMSMixin(CityScrapersSpider, metaclass=SkamaniaCountyMixinMeta):
             yield self._sharepoint_list_request(
                 f"{self.sharepoint_list_url}&{next_href.lstrip('?')}",
                 self._parse_folder_items,
-                meta={**response.meta},
+                meta={"folder_name": folder_name},
             )
 
         self._pending_sharepoint_requests -= 1
@@ -219,23 +223,32 @@ class SkamaniaEMSMixin(CityScrapersSpider, metaclass=SkamaniaCountyMixinMeta):
 
     def _parse_cell(self, cell, year):
         """Parse a cell like "September 14  (changed from Sept 21)<br/>*Budget
-        Workshop, FY27" into the meeting start and its notes"""
+        Workshop, FY27" into the meeting start and its notes. Returns (None, "")
+        for an empty cell and raises SkamaniaEMSCalendarError when a cell with
+        text has no readable date."""
         lines = [
             " ".join(text.split())
             for text in cell.css("::text").getall()
             if text.strip()
         ]
         if not lines:
-            return None, ""
+            raise SkamaniaEMSCalendarError(
+                f"{self.name}: empty schedule cell for {year}: {cell.get()!r}"
+            )
 
         match = re.match(r"^([A-Za-z]+)\.?\s+(\d{1,2})\b(.*)$", lines[0])
         if not match:
-            return None, ""
+            raise SkamaniaEMSCalendarError(
+                f"{self.name}: no meeting date in {year} schedule cell: "
+                f"{' / '.join(lines)!r}"
+            )
         try:
             date = date_parser(f"{match.group(1)} {match.group(2)} {year}").date()
-        except (ValueError, OverflowError):
-            self.logger.warning("Could not parse meeting date: %s %s", lines[0], year)
-            return None, ""
+        except (ValueError, OverflowError) as e:
+            raise SkamaniaEMSCalendarError(
+                f"{self.name}: could not parse meeting date {lines[0]!r} "
+                f"in {year} schedule"
+            ) from e
 
         notes = [match.group(3).strip()] + [
             line.lstrip("*").strip() for line in lines[1:]

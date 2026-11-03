@@ -228,10 +228,11 @@ class SkamaniaEMSMixin(CityScrapersSpider, metaclass=SkamaniaCountyMixinMeta):
         return ""
 
     def _parse_cell(self, cell, year):
-        """Parse a cell like "September 14  (changed from Sept 21)<br/>*Budget
-        Workshop, FY27" into the meeting start and its notes. Returns (None, "")
-        for an empty cell and raises SkamaniaEMSCalendarError when a cell with
-        text has no readable date."""
+        """Parse a cell like "September 14 (changed from Sept 21)<br/>*Budget
+        Workshop, FY27" into the meeting start and its notes. Raises
+        SkamaniaEMSCalendarError for an empty cell and when a cell with
+        text has no readable date.
+        """
         lines = [
             " ".join(text.split())
             for text in cell.css("::text").getall()

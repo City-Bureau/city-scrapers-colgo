@@ -180,9 +180,15 @@ class SkamaniaEMSMixin(CityScrapersSpider, metaclass=SkamaniaCountyMixinMeta):
         time_notes = self._parse_time_notes(response)
 
         # Each year's schedule is a <p><strong>YYYY</strong></p> followed by a table
-        for year_strong in response.xpath(
+        year_element = response.xpath(
             "//strong[re:test(normalize-space(.), '^\\d{4}$')]"
-        ):
+        )
+        if not year_element:
+            raise SkamaniaEMSCalendarError(
+                f"{self.name}: no yearly schedule found on {response.url}"
+            )
+
+        for year_strong in year_element:
             year = year_strong.xpath("normalize-space(.)").get()
             table = year_strong.xpath(
                 "./ancestor::p[1]/following-sibling::*[1][self::table]"

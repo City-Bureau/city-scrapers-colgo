@@ -180,9 +180,15 @@ class SkamaniaEMSMixin(CityScrapersSpider, metaclass=SkamaniaCountyMixinMeta):
         time_notes = self._parse_time_notes(response)
 
         # Each year's schedule is a <p><strong>YYYY</strong></p> followed by a table
-        for year_strong in response.xpath(
+        year_element = response.xpath(
             "//strong[re:test(normalize-space(.), '^\\d{4}$')]"
-        ):
+        )
+        if not year_element:
+            raise SkamaniaEMSCalendarError(
+                f"{self.name}: no yearly schedule found on {response.url}"
+            )
+
+        for year_strong in year_element:
             year = year_strong.xpath("normalize-space(.)").get()
             table = year_strong.xpath(
                 "./ancestor::p[1]/following-sibling::*[1][self::table]"
@@ -222,10 +228,11 @@ class SkamaniaEMSMixin(CityScrapersSpider, metaclass=SkamaniaCountyMixinMeta):
         return ""
 
     def _parse_cell(self, cell, year):
-        """Parse a cell like "September 14  (changed from Sept 21)<br/>*Budget
-        Workshop, FY27" into the meeting start and its notes. Returns (None, "")
-        for an empty cell and raises SkamaniaEMSCalendarError when a cell with
-        text has no readable date."""
+        """Parse a cell like "September 14 (changed from Sept 21)<br/>*Budget
+        Workshop, FY27" into the meeting start and its notes. Raises
+        SkamaniaEMSCalendarError for an empty cell and when a cell with
+        text has no readable date.
+        """
         lines = [
             " ".join(text.split())
             for text in cell.css("::text").getall()

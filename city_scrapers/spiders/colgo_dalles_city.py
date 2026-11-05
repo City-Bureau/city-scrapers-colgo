@@ -25,6 +25,7 @@ spider_configs = [
         "location": DallesCityMixin.city_hall,
         "time_notes": "",
         "_classification": CITY_COUNCIL,
+        "is_main": True,
     },
     {
         "class_name": "ColgoDallesInformationalSpider",

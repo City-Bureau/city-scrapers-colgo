@@ -10,11 +10,8 @@ from unittest.mock import MagicMock
 
 import pytest
 from city_scrapers_core.constants import (
-    BOARD,
     CANCELLED,
     CITY_COUNCIL,
-    COMMISSION,
-    NOT_CLASSIFIED,
     PASSED,
     TENTATIVE,
 )

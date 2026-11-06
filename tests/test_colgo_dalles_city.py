@@ -9,12 +9,7 @@ from os.path import dirname, join
 from unittest.mock import MagicMock
 
 import pytest
-from city_scrapers_core.constants import (
-    CANCELLED,
-    CITY_COUNCIL,
-    PASSED,
-    TENTATIVE,
-)
+from city_scrapers_core.constants import CANCELLED, CITY_COUNCIL, PASSED, TENTATIVE
 from city_scrapers_core.utils import file_response
 from freezegun import freeze_time
 from scrapy.http import TextResponse

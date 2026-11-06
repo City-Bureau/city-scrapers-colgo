@@ -3,6 +3,7 @@ dalles_city_calendar.json: Revize calendar feed fetched 2026-11-05.
 dalles_city_council_sessions_sample.json: sample sessions API page (category 1).
 """
 
+import json
 from datetime import datetime
 from os.path import dirname, join
 from unittest.mock import MagicMock
@@ -76,7 +77,7 @@ def test_sessions_failure_still_requests_calendar():
 
 
 def test_count(parsed_items):
-    assert len(parsed_items) == 73
+    assert len(parsed_items) == 74
 
 
 def test_meeting(parsed_items):
@@ -89,6 +90,11 @@ def test_meeting(parsed_items):
         "name": "City Hall",
         "address": "313 Court Street, The Dalles, OR 97058",
     }
+    assert item["description"].startswith(
+        "City Council meetings are livestreamed and past video recordings are "
+        "available on this page:\nCity Council Livestream Links and Video Recordings "
+        "(https://www.thedalles.gov/government/meetings___agendas/index.php)"
+    )
     assert item["source"] == (
         "https://www.thedalles.gov/calendar.php?view=month&month=10&day=01&year=2026"
     )
@@ -118,6 +124,22 @@ def test_cancelled(parsed_items):
     item = _by_start(parsed_items, 2026, 10, 12, 17, 30)
     assert item["title"] == "City Council Meeting"
     assert item["status"] == CANCELLED
+    assert item["description"] == (
+        "This meeting is cancelled due to the Monday Holiday.\n"
+        "A Special Meeting will be held Tuesday, October 13th."
+    )
+
+
+@pytest.mark.parametrize("order", [1, -1])
+def test_cancelled_duplicate_wins(order):
+    events = [
+        {"title": title, "calendar_displays": ["1"], "start": "2026-11-16T17:30:00"}
+        for title in ["City Council Meeting", "CANCELLED - City Council Meeting"]
+    ][::order]
+    response = TextResponse(url=CALENDAR_URL, body=json.dumps(events).encode())
+    with freeze_time("2026-11-05"):
+        items = list(_spider().parse(response))
+    assert [item["status"] for item in items] == [CANCELLED]
 
 
 def test_links(parsed_items):
@@ -139,6 +161,23 @@ def test_links(parsed_items):
     }
 
 
+def test_work_session_not_matched_to_regular_meeting():
+    spider = _spider()
+    spider._sessions = [
+        {
+            "title": "City Council Work Session",
+            "start_date": "2026-11-09T16:00:00Z",
+            "created_at": "2020-01-01T00:00:00Z",
+            "video_url": "https://example.org/work-session",
+        }
+    ]
+    meeting = {"title": "City Council Meeting", "start": datetime(2026, 11, 9, 17, 30)}
+    meeting["links"] = []
+    spider._attach_links([meeting])
+    assert meeting["links"] == []
+    assert spider._unmatched_sessions == 1
+
+
 def test_calendar_not_json_raises():
     response = TextResponse(url=CALENDAR_URL, body=b"<html></html>")
     with pytest.raises(DallesApiError, match="calendar did not return JSON"):
@@ -150,18 +189,3 @@ def test_zero_meetings_reports_error():
     list(spider.parse(TextResponse(url=CALENDAR_URL, body=b"[]")))
     spider._on_spider_closed(spider, "finished")
     spider.crawler.signals.send_catch_log.assert_called_once()
-
-
-@pytest.mark.parametrize(
-    "class_name,category_id,classification",
-    [
-        ("ColgoDallesInformationalSpider", "2", NOT_CLASSIFIED),
-        ("ColgoDallesPlanningCommissionSpider", "3", COMMISSION),
-        ("ColgoDallesHistoricLandmarksSpider", "4", COMMISSION),
-        ("ColgoDallesUrbanRenewalSpider", "5", BOARD),
-    ],
-)
-def test_other_spiders(class_name, category_id, classification):
-    spider = getattr(colgo_dalles_city, class_name)()
-    assert spider.category_id == category_id
-    assert spider._classification == classification

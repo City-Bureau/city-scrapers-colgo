@@ -7,7 +7,7 @@ import html
 import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlencode
+from urllib.parse import unquote, urlencode, urljoin
 from zoneinfo import ZoneInfo
 
 import scrapy
@@ -84,6 +84,9 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
         "address": "313 Court Street, The Dalles, OR 97058",
     }
 
+    # A session only gets matched to a meeting of the same kind
+    meeting_kinds = ("work session", "executive session", "special")
+
     # How far ahead to expand recurring calendar events
     recurrence_horizon_days = 180
 
@@ -132,6 +135,7 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
             headers={"Accept": "application/json"},
             callback=self.parse_sessions,
             errback=self._sessions_failed,
+            dont_filter=True,
         )
 
     def _calendar_request(self):
@@ -242,7 +246,7 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
         horizon = self._now() + timedelta(days=self.recurrence_horizon_days)
 
         meetings = {}
-        one_off_starts = set()
+        one_off_titles_by_start = defaultdict(set)
         recurring = []
         for event in events:
             starts = self._event_starts(event, horizon)
@@ -250,20 +254,27 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
                 recurring.extend((event, start) for start in starts)
                 continue
             for start in starts:
-                one_off_starts.add(start)
+                one_off_titles_by_start[start].add(
+                    self._parse_title(self._unescape(event.get("title")))
+                )
                 self._add_meeting(meetings, event, start)
         for event, start in recurring:
             # A one-off event at the same time replaces that occurrence
             # (e.g. a moved or cancelled regular meeting).
-            if start not in one_off_starts:
+            title = self._parse_title(self._unescape(event.get("title")))
+            if title not in one_off_titles_by_start[start]:
                 self._add_meeting(meetings, event, start)
 
         ordered = sorted(meetings.values(), key=lambda pair: pair[0]["start"])
         self._attach_links([meeting for meeting, _ in ordered])
 
         for meeting, raw_title in ordered:
-            # _parse_title strips "CANCELLED", so check the raw title too.
-            meeting["status"] = self._get_status(meeting, text=raw_title)
+            # Status from the raw title only: _parse_title strips "CANCELLED", and
+            # most descriptions say "If no agenda is posted that meeting has been
+            # cancelled."
+            meeting["status"] = self._get_status(
+                dict(meeting, description=""), text=raw_title
+            )
             meeting["id"] = self._get_id(meeting)
             self._meetings_parsed += 1
             yield meeting
@@ -299,7 +310,7 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
         raw_title = self._unescape(event.get("title"))
         meeting = Meeting(
             title=self._parse_title(raw_title),
-            description="",
+            description=self._parse_description(event),
             classification=self._classification,
             start=start,
             end=self._parse_end(event, start),
@@ -309,8 +320,36 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
             links=[],
             source=self._parse_source(start),
         )
-        # Duplicate events (same title and time) become one meeting.
-        meetings.setdefault((meeting["title"], start), (meeting, raw_title))
+        # Duplicate events (same title and time) become one meeting; a
+        # cancellation wins over an active event whatever the feed order.
+        key = (meeting["title"], start)
+        existing = meetings.get(key)
+        if existing is None or (
+            "cancel" in raw_title.lower() and "cancel" not in existing[1].lower()
+        ):
+            meetings[key] = (meeting, raw_title)
+
+    def _parse_description(self, event):
+        """Plain text from the URL-encoded HTML "desc" field."""
+        text = unquote(event.get("desc") or "")
+        text = re.sub(
+            r"<a\b[^>]*?href=[\"']([^\"']*)[\"'][^>]*>(.*?)</a>",
+            self._link_text,
+            text,
+            flags=re.I | re.S,
+        )
+        text = re.sub(r"<br\s*/?>|</p>|</div>|<hr\s*/?>", "\n", text, flags=re.I)
+        text = html.unescape(re.sub(r"<[^>]+>", "", text)).replace("\xa0", " ")
+        lines = (re.sub(r"[ \t]+", " ", line).strip() for line in text.split("\n"))
+        return "\n".join(line for line in lines if line)
+
+    def _link_text(self, match):
+        """'<a href="url">text</a>' as 'text (url)'."""
+        text = self._unescape(re.sub(r"<[^>]+>", "", match.group(2)))
+        href = urljoin(self.calendar_page_url, html.unescape(match.group(1)).strip())
+        if not match.group(1).strip() or href.removeprefix("mailto:") == text:
+            return text
+        return f"{text} ({href})"
 
     def _unescape(self, value):
         text = html.unescape(value or "").replace("\xa0", " ")
@@ -376,19 +415,24 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
     # Links from Open Media sessions
 
     def _attach_links(self, meetings):
-        """Attach each session's links to the closest meeting that day."""
+        """Attach each session's links to the closest same-kind meeting that day."""
         by_date = defaultdict(list)
         for meeting in meetings:
             by_date[meeting["start"].date()].append(meeting)
 
         for session in self._sessions:
             start = self._parse_session_start(session)
-            candidates = by_date.get(start.date()) if start else None
+            kinds = self._meeting_kinds(session.get("title"))
+            candidates = [
+                meeting
+                for meeting in (by_date.get(start.date(), []) if start else [])
+                if self._meeting_kinds(meeting["title"]) == kinds
+            ]
             if not candidates:
                 self._unmatched_sessions += 1
                 self.logger.debug(
                     f"Session {session.get('id')} ({session.get('title')!r}, "
-                    f"{start}) has no calendar meeting; links skipped"
+                    f"{start}) has no matching calendar meeting; links skipped"
                 )
                 continue
             meeting = min(candidates, key=lambda m: abs(m["start"] - start))
@@ -401,6 +445,10 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
         self.crawler.stats.set_value(
             "dalles/sessions_without_meeting", self._unmatched_sessions
         )
+
+    def _meeting_kinds(self, title):
+        title = (title or "").lower()
+        return {kind for kind in self.meeting_kinds if kind in title}
 
     def _parse_session_start(self, item):
         """Session start as a naive Pacific datetime."""

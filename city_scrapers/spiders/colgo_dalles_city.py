@@ -1,21 +1,13 @@
 """
-City scrapers for The Dalles, Oregon government meetings.
-
-This module uses a factory pattern to create spiders for scraping meetings from
-The Dalles city government using the OmpNetwork platform API. The following
-agencies are covered:
-- City Council
-- Informational/Town Hall meetings
-- Planning Commission
-- Urban Renewal Agency
-- Historic Landmarks Commission
+Spiders for The Dalles, Oregon meetings. Each config's calendar_title_pattern
+selects its Revize calendar events; category_id selects its Open Media links.
 """
 
 from city_scrapers_core.constants import BOARD, CITY_COUNCIL, COMMISSION, NOT_CLASSIFIED
 
-from city_scrapers.mixins.dalles_city import DallesCityMixin
+from city_scrapers.mixins.colgo_dalles_city import DallesCityMixin
 
-# Location is not available from the API; users should check the source/agenda
+# Used when a calendar event has no location
 default_location = {
     "name": "Location unavailable",
     "address": "Check source or agenda for location details",
@@ -27,16 +19,20 @@ spider_configs = [
         "class_name": "ColgoDallesCityCouncilSpider",
         "name": "colgo_dalles_city_council",
         "agency": "The Dalles City Council",
-        "category_id": "214",
-        "location": default_location,
+        "category_id": "1",
+        "calendar_title_pattern": r"city council",
+        # The 2nd Monday City Council series has no location in the calendar
+        "location": DallesCityMixin.city_hall,
         "time_notes": "",
         "_classification": CITY_COUNCIL,
+        "is_main": True,
     },
     {
         "class_name": "ColgoDallesInformationalSpider",
         "name": "colgo_dalles_informational",
         "agency": "The Dalles Informational or Town Hall Meetings",
-        "category_id": "215",
+        "category_id": "2",
+        "calendar_title_pattern": r"informational|town hall",
         "location": default_location,
         "time_notes": "",
         "_classification": NOT_CLASSIFIED,
@@ -45,7 +41,8 @@ spider_configs = [
         "class_name": "ColgoDallesPlanningCommissionSpider",
         "name": "colgo_dalles_planning_commission",
         "agency": "The Dalles Planning Commission",
-        "category_id": "216",
+        "category_id": "3",
+        "calendar_title_pattern": r"planning commission",
         "location": default_location,
         "time_notes": "",
         "_classification": COMMISSION,
@@ -54,7 +51,8 @@ spider_configs = [
         "class_name": "ColgoDallesHistoricLandmarksSpider",
         "name": "colgo_dalles_historic_landmarks",
         "agency": "The Dalles Historic Landmarks Commission",
-        "category_id": "217",
+        "category_id": "4",
+        "calendar_title_pattern": r"historic landmarks",
         "location": default_location,
         "time_notes": "",
         "_classification": COMMISSION,
@@ -63,7 +61,8 @@ spider_configs = [
         "class_name": "ColgoDallesUrbanRenewalSpider",
         "name": "colgo_dalles_urban_renewal",
         "agency": "The Dalles Urban Renewal Agency",
-        "category_id": "218",
+        "category_id": "5",
+        "calendar_title_pattern": r"urban renewal",
         "location": default_location,
         "time_notes": "",
         "_classification": BOARD,

@@ -19,6 +19,14 @@ Calendar fixtures:
         2025-01 with the City Council filter, from www.whitesalmonwa.gov.
     colgo_white_salmon_planning_calendar.html
         Hand-written page with one Planning Commission meeting.
+    colgo_white_salmon_all_calendar_2025_06.html
+        2025-06 with field_microsite_tid_1=All, fetched on 2026-11-09. It lists
+        community-development-committee-meeting-42 and -44, two pages for the
+        same 2025-06-30 17:30 meeting; only -44 has the agenda. Both pages are
+        saved as colgo_white_salmon_community_development_detail_{42,44}.html.
+    colgo_white_salmon_citylab_board_canceled_detail.html
+        citylab-board-meeting-–-canceled, fetched on 2026-11-09. Its title has
+        an en dash: "CityLab Board Meeting – Canceled".
 
 The City Council filter also lists the Tree Board, CityLAB Board and committee
 meetings, but not Planning Commission meetings.
@@ -32,10 +40,12 @@ meeting that matches those spiders' keywords.
 
 from datetime import datetime
 from os.path import dirname, join
+from unittest.mock import MagicMock
 
 import pytest
 from city_scrapers_core.constants import (
     BOARD,
+    CANCELLED,
     CITY_COUNCIL,
     COMMISSION,
     COMMITTEE,
@@ -298,3 +308,100 @@ def test_start_prefers_calendar_start_over_detail_page():
         calendar_start="2026-03-04T18:00:00-08:00",
     )
     assert items[0]["start"] == datetime(2026, 3, 4, 18, 0)
+
+
+# ============================================================================
+# Duplicate meetings
+# ============================================================================
+COMMUNITY_DEV = "ColgoWhiteSalmonCommunityDevelopmentSpider"
+COMMUNITY_DEV_PAGE = f"{LEGACY_HOST}/citycouncil/page/community-development-committee-"
+DUPLICATE_START = "2025-06-30T17:30:00-07:00"
+
+
+def _calendar_2025_06():
+    return file_response(
+        _path("colgo_white_salmon_all_calendar_2025_06.html"),
+        url=_calendar_url("2025-06"),
+    )
+
+
+def _community_dev_detail(number, meta):
+    response = file_response(
+        _path(f"colgo_white_salmon_community_development_detail_{number}.html"),
+        url=f"{COMMUNITY_DEV_PAGE}meeting-{number}",
+    )
+    response.meta.update(meta)
+    return response
+
+
+def test_same_start_time_is_requested_once():
+    spider = _spider(COMMUNITY_DEV)
+    requests = list(spider.parse(_calendar_2025_06()))
+    assert [r.url for r in requests] == [
+        f"{COMMUNITY_DEV_PAGE}meeting-canceled-4",
+        f"{COMMUNITY_DEV_PAGE}meeting-42",
+    ]
+    assert requests[1].meta["calendar_start"] == DUPLICATE_START
+    assert requests[1].meta["pending_urls"] == [f"{COMMUNITY_DEV_PAGE}meeting-44"]
+    assert requests[0].meta["pending_urls"] == []
+
+
+def test_start_time_on_a_second_calendar_page_is_skipped():
+    """A meeting listed on two month pages is requested once."""
+    spider = _spider(COMMUNITY_DEV)
+    assert len(list(spider.parse(_calendar_2025_06()))) == 2
+    assert list(spider.parse(_calendar_2025_06())) == []
+
+
+@pytest.mark.parametrize("first,second", [(42, 44), (44, 42)])
+def test_duplicate_keeps_page_with_agenda(first, second):
+    spider = _spider(COMMUNITY_DEV)
+    urls = [f"{COMMUNITY_DEV_PAGE}meeting-{n}" for n in (first, second)]
+    request = spider._meeting_request(urls, DUPLICATE_START)
+    with freeze_time("2025-07-01"):
+        # The first page only leads to the second
+        output = list(spider.parse_meeting(_community_dev_detail(first, request.meta)))
+        assert [r.url for r in output] == [f"{COMMUNITY_DEV_PAGE}meeting-{second}"]
+        items = list(
+            spider.parse_meeting(_community_dev_detail(second, output[0].meta))
+        )
+
+    assert len(items) == 1
+    assert items[0]["source"] == f"{COMMUNITY_DEV_PAGE}meeting-44"
+    assert [link["title"] for link in items[0]["links"]] == ["Agenda"]
+    assert items[0]["start"] == datetime(2025, 6, 30, 17, 30)
+    assert items[0]["title"] == "Community Development Committee Meeting"
+    assert spider._meetings_parsed == 1
+
+
+def test_failed_duplicate_page_yields_page_already_parsed():
+    spider = _spider(COMMUNITY_DEV)
+    request = spider._meeting_request(
+        [f"{COMMUNITY_DEV_PAGE}meeting-44", f"{COMMUNITY_DEV_PAGE}meeting-42"],
+        DUPLICATE_START,
+    )
+    with freeze_time("2025-07-01"):
+        output = list(spider.parse_meeting(_community_dev_detail(44, request.meta)))
+    failure = MagicMock(value=Exception("HTTP 500"))
+    failure.request = output[0]
+
+    items = spider._request_failed(failure)
+
+    assert [item["source"] for item in items] == [f"{COMMUNITY_DEV_PAGE}meeting-44"]
+    assert spider._failed_requests == 1
+
+
+# ============================================================================
+# Title cleaning
+# ============================================================================
+def test_title_en_dash_is_removed():
+    spider = _spider("ColgoWhiteSalmonCityLABBoardSpider")
+    response = file_response(
+        _path("colgo_white_salmon_citylab_board_canceled_detail.html"),
+        url=f"{LEGACY_HOST}/citycouncil/page/citylab-board-meeting-%E2%80%93-canceled",
+    )
+    with freeze_time("2026-11-09"):
+        items = list(spider.parse_meeting(response))
+    assert items[0]["title"] == "CityLab Board Meeting Canceled"
+    assert items[0]["start"] == datetime(2025, 9, 15, 18, 0)
+    assert items[0]["status"] == CANCELLED

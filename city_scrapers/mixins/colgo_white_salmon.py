@@ -42,6 +42,7 @@ Example:
         classification = CITY_COUNCIL
 """
 
+import re
 from datetime import datetime
 from typing import ClassVar
 
@@ -51,6 +52,10 @@ from city_scrapers_core.spiders import CityScrapersSpider
 from dateutil.relativedelta import relativedelta
 from scrapy import signals
 from twisted.python.failure import Failure
+
+
+# En dash used as a separator in some titles ("CityLab Board Meeting – Canceled")
+TITLE_RE = re.compile(r"–")
 
 
 class WhiteSalmonSourceError(Exception):
@@ -124,7 +129,7 @@ class WhiteSalmonMixin(CityScrapersSpider):
     default_description = ""
 
     # Number of years to scrape into the past
-    years_back = 3
+    years_back = 1
     # Number of months to scrape into the future
     months_ahead = 12
 
@@ -137,6 +142,8 @@ class WhiteSalmonMixin(CityScrapersSpider):
         self._calendar_events = 0
         self._meetings_matched = 0
         self._meetings_parsed = 0
+        # Calendar start times already requested, so each meeting is scraped once
+        self._seen_dates = set()
 
     @classmethod
     def from_crawler(cls, crawler, *args, **kwargs):
@@ -174,13 +181,22 @@ class WhiteSalmonMixin(CityScrapersSpider):
         """
         Parse calendar page and follow links to meeting detail pages.
 
+        The calendar sometimes lists the same meeting more than once: two
+        pages with the same start time (one with the agenda, one without), or
+        the same page on two month pages. Links are grouped by calendar start
+        time, and a start time already requested is skipped. All pages in a
+        group are fetched one after another, and parse_meeting keeps the one
+        with the most links.
+
         Args:
             response: Scrapy response containing calendar HTML
 
         Yields:
-            Request: Requests to individual meeting detail pages
+            Request: One request per meeting start time
         """
         self._calendar_ok += 1
+        # Matched detail page URLs grouped by start time, in calendar order
+        groups = {}
         # Each calendar item contains the meeting link and its datetime
         for item in response.css(".view-item-calendar"):
             link = item.css(".views-field-title a::attr(href)").get()
@@ -197,35 +213,56 @@ class WhiteSalmonMixin(CityScrapersSpider):
                 ".views-field-field-calendar-date .date-display-single::attr(content)"
             ).get()
 
-            meta = {}
-            if calendar_dt:
-                meta["calendar_start"] = calendar_dt
-
             full_url = response.urljoin(link)
-            yield scrapy.Request(
-                url=full_url,
-                callback=self.parse_meeting,
-                errback=self._request_failed,
-                meta=meta,
-                dont_filter=True,
-            )
+            # Without a calendar time, only the same URL counts as a duplicate
+            urls = groups.setdefault((calendar_dt, calendar_dt or full_url), [])
+            if full_url not in urls:
+                urls.append(full_url)
+
+        for (calendar_dt, date_key), urls in groups.items():
+            if date_key in self._seen_dates:
+                continue
+            self._seen_dates.add(date_key)
+            yield self._meeting_request(urls, calendar_dt)
+
+    def _meeting_request(self, urls, calendar_start, best=None):
+        """
+        Request the first of urls, all pages for one meeting. The rest are
+        requested in turn by parse_meeting, carrying the best meeting so far.
+        """
+        meta = {"pending_urls": urls[1:], "best_meeting": best}
+        if calendar_start:
+            meta["calendar_start"] = calendar_start
+        return scrapy.Request(
+            url=urls[0],
+            callback=self.parse_meeting,
+            errback=self._request_failed,
+            meta=meta,
+            dont_filter=True,
+        )
 
     def parse_meeting(self, response):
         """
-        Parse a single meeting detail page.
+        Parse a meeting detail page. If other pages for the same meeting are
+        pending, request the next one instead of yielding.
 
         Args:
             response: Scrapy response containing meeting detail HTML
 
         Yields:
-            Meeting: Parsed meeting item
+            Meeting: The page with the most links among the meeting's pages,
+            or Request: the next pending page for the same meeting
         """
+        yield from self._next_or_best(response.meta, self._parse_meeting(response))
+
+    def _parse_meeting(self, response):
+        """Build a Meeting from a detail page, or None without a start time."""
         title = self._parse_title(response)
         start = self._parse_start(response)
 
         if not start:
             self.logger.warning("Skipping meeting with no start time: %s", response.url)
-            return
+            return None
 
         meeting = Meeting(
             title=title,
@@ -242,14 +279,36 @@ class WhiteSalmonMixin(CityScrapersSpider):
 
         meeting["status"] = self._get_status(meeting, text=title)
         meeting["id"] = self._get_id(meeting)
+        return meeting
 
-        self._meetings_parsed += 1
-        yield meeting
+    def _next_or_best(self, meta, meeting):
+        """
+        Compare meeting with the best page so far for the same meeting. Request
+        the next pending page if there is one, otherwise yield the best.
+        On a tie the earlier page in calendar order is kept.
+        """
+        best = meta.get("best_meeting")
+        if meeting and (best is None or len(meeting["links"]) > len(best["links"])):
+            best = meeting
+        pending = meta.get("pending_urls")
+        if pending:
+            yield self._meeting_request(pending, meta.get("calendar_start"), best)
+        elif best:
+            self._meetings_parsed += 1
+            yield best
 
     def _request_failed(self, failure):
-        """A calendar or meeting page that could not be downloaded."""
+        """
+        A calendar or meeting page that could not be downloaded. For a meeting
+        page, carry on with the meeting's other pages, or yield the best one
+        already parsed.
+        """
         self._failed_requests += 1
         self.logger.warning(f"Request failed: {failure.value!r}")
+        meta = getattr(getattr(failure, "request", None), "meta", None)
+        if not isinstance(meta, dict):
+            return []
+        return list(self._next_or_best(meta, None))
 
     def _on_spider_closed(self, spider, reason):
         """
@@ -320,9 +379,13 @@ class WhiteSalmonMixin(CityScrapersSpider):
         )
 
     def _parse_title(self, response):
-        """Extract meeting title from page."""
+        """
+        Extract the meeting title from the page, removing en dashes and the
+        extra whitespace they leave behind.
+        """
         title_str = response.css("#page-title::text").get() or ""
-        return title_str.strip() or self.agency
+        title_str = " ".join(TITLE_RE.sub("", title_str).split())
+        return title_str or self.agency
 
     def _parse_start(self, response):
         """

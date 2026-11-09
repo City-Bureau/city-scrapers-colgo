@@ -27,6 +27,7 @@ spider_configs = [
             "provides legal guidance to ensure compliance with applicable laws "
             "and regulations in all City discussions, decisions, and actions."
         ),
+        "is_main": True,
     },
     {
         "class_name": "ColgoWhiteSalmonCivilServiceSpider",

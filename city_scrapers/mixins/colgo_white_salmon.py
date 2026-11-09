@@ -5,7 +5,13 @@ This mixin scrapes meeting data from the City of White Salmon government website
 using CSS selectors on their Drupal calendar.
 
 Calendar URL:
-    https://legacywhitesalmonwa.teammunicode.com/calendar/month/{YYYY-MM}?field_microsite_tid=All&field_microsite_tid_1={agency_id}
+    https://legacywhitesalmonwa.teammunicode.com/calendar/month/{YYYY-MM}
+        ?field_microsite_tid=All&field_microsite_tid_1=All
+
+Every spider reads the unfiltered ("All") calendar and keeps only the meetings
+whose detail link contains its meeting_keyword. The per-agency filter is not
+used: the City Council filter (27), for example, also lists Tree Board, CityLAB
+Board and committee meetings.
 
 In 2026 the city moved www.whitesalmonwa.gov to CivicPlus, where the old
 calendar URLs return 404. The Drupal site still runs on the legacy host, and the
@@ -13,22 +19,25 @@ city's own Agendas & Minutes page (https://www.whitesalmonwa.gov/186/Agendas-Min
 embeds https://legacywhitesalmonwa.teammunicode.com/meetings, so that is where
 meetings are published for now.
 
-If every calendar page fails, a meeting page fails, or a finished run finds no
-meetings, the spider reports a WhiteSalmonSourceError through the spider_error
-signal (which reaches Sentry) instead of finishing quietly with no items.
+If any calendar or meeting page fails to download, the calendar pages list no
+events at all, or meeting links are followed but none can be parsed, the spider
+reports one WhiteSalmonSourceError through the spider_error signal (which
+reaches Sentry) instead of finishing quietly. If the calendar lists events but
+none match meeting_keyword (e.g. the Civil Service Commission has no meetings),
+it only logs a warning and counts it in the white_salmon/no_matching_meetings
+stat.
 
 Required class variables (enforced by __init_subclass__):
     name (str): Spider name/slug (e.g., "colgo_white_salmon_city_council")
     agency (str): Full agency name (e.g., "City Council of White Salmon")
-    agency_id (str): Agency filter ID from website (e.g., "27")
-    meeting_keyword (str): Keyword to filter meeting links (e.g., "city-council")
+    meeting_keyword (str): Text a meeting link must contain to belong to this
+        spider (e.g., "city-council"). An empty string keeps every meeting.
     classification: Meeting classification constant (e.g., CITY_COUNCIL)
 
 Example:
     class ColgoWhiteSalmonCityCouncilSpider(WhiteSalmonMixin):
         name = "colgo_white_salmon_city_council"
         agency = "City Council of White Salmon"
-        agency_id = "27"
         meeting_keyword = "city-council"
         classification = CITY_COUNCIL
 """
@@ -58,14 +67,12 @@ class WhiteSalmonMixin(CityScrapersSpider):
     # Required to be overridden (enforced by __init_subclass__)
     name = None
     agency = None
-    agency_id = None
     meeting_keyword = None
     classification = None
 
     _required_vars = [
         "agency",
         "name",
-        "agency_id",
         "meeting_keyword",
         "classification",
     ]
@@ -96,7 +103,7 @@ class WhiteSalmonMixin(CityScrapersSpider):
     timezone = "America/Los_Angeles"
     calendar_url = (
         "https://legacywhitesalmonwa.teammunicode.com/calendar/month/{month}"
-        "?field_microsite_tid=All&field_microsite_tid_1={agency_id}"
+        "?field_microsite_tid=All&field_microsite_tid_1=All"
     )
 
     # Rate limiting settings to avoid 429 errors
@@ -126,6 +133,9 @@ class WhiteSalmonMixin(CityScrapersSpider):
         self._calendar_requested = 0
         self._calendar_ok = 0
         self._failed_requests = 0
+        # Events listed on calendar pages, and how many matched meeting_keyword
+        self._calendar_events = 0
+        self._meetings_matched = 0
         self._meetings_parsed = 0
 
     @classmethod
@@ -136,7 +146,8 @@ class WhiteSalmonMixin(CityScrapersSpider):
 
     def start_requests(self):
         """
-        Generate requests for past years and upcoming months.
+        Generate requests for the unfiltered calendar for past years and
+        upcoming months.
 
         Scrapes calendar data from years_back years in the past
         through months_ahead months into the future.
@@ -153,7 +164,7 @@ class WhiteSalmonMixin(CityScrapersSpider):
         for i in range(total_months):
             target_date = start_date + relativedelta(months=i)
             month_str = target_date.strftime("%Y-%m")
-            url = self.calendar_url.format(month=month_str, agency_id=self.agency_id)
+            url = self.calendar_url.format(month=month_str)
             self._calendar_requested += 1
             yield scrapy.Request(
                 url=url, callback=self.parse, errback=self._request_failed
@@ -175,10 +186,12 @@ class WhiteSalmonMixin(CityScrapersSpider):
             link = item.css(".views-field-title a::attr(href)").get()
             if not link:
                 continue
+            self._calendar_events += 1
 
             # Filter by meeting_keyword to only scrape relevant meetings
             if self.meeting_keyword and self.meeting_keyword not in link:
                 continue
+            self._meetings_matched += 1
 
             calendar_dt = item.css(
                 ".views-field-field-calendar-date .date-display-single::attr(content)"
@@ -239,22 +252,55 @@ class WhiteSalmonMixin(CityScrapersSpider):
         self.logger.warning(f"Request failed: {failure.value!r}")
 
     def _on_spider_closed(self, spider, reason):
-        """Report one error per run if pages failed or no meetings were found."""
+        """
+        Report once per run when the scraper may be broken or found nothing.
+
+        A finished run with 0 meetings is an error when something points at
+        the scraper or the site: a request failed, the calendar pages listed no
+        events at all (the page layout or URL changed), or meeting links were
+        followed but none could be parsed. When the calendar pages listed
+        events and none matched meeting_keyword, the calendar simply has no
+        meetings of this type, which is only a warning.
+        """
         problems = []
         if self._failed_requests:
             problems.append(f"{self._failed_requests} failed request(s)")
-        if reason == "finished" and self._meetings_parsed == 0:
-            problems.append("0 meetings parsed")
-        if not problems:
-            return
-        self._report_error(
-            WhiteSalmonSourceError(
-                f"{self.name}: {'; '.join(problems)} "
-                f"(finish_reason={reason}, "
-                f"calendar pages ok={self._calendar_ok}/{self._calendar_requested}, "
-                f"meetings={self._meetings_parsed})"
+        no_meetings = reason == "finished" and self._meetings_parsed == 0
+        if no_meetings and not self._calendar_events:
+            problems.append("0 meetings parsed: calendar pages listed no events")
+        elif no_meetings and self._meetings_matched:
+            problems.append(
+                f"0 meetings parsed from {self._meetings_matched} meeting page(s)"
             )
+        elif no_meetings and self._failed_requests:
+            problems.append("0 meetings parsed")
+
+        summary = (
+            f"(finish_reason={reason}, "
+            f"calendar pages ok={self._calendar_ok}/{self._calendar_requested}, "
+            f"calendar events={self._calendar_events}, "
+            f"matched={self._meetings_matched}, "
+            f"meetings={self._meetings_parsed})"
         )
+        if problems:
+            self._report_error(
+                WhiteSalmonSourceError(f"{self.name}: {'; '.join(problems)} {summary}")
+            )
+        elif no_meetings:
+            self._report_warning(
+                f"{self.name}: no meetings matching {self.meeting_keyword!r} "
+                f"on the calendar {summary}",
+                stat="no_matching_meetings",
+            )
+
+    def _report_warning(self, message, stat):
+        """
+        Log a warning and count it in the white_salmon/{stat} stat. Unlike
+        _report_error this does not send the spider_error signal, so it does
+        not reach Sentry.
+        """
+        self.logger.warning(message)
+        self.crawler.stats.inc_value(f"white_salmon/{stat}", spider=self)
 
     def _report_error(self, exc):
         """

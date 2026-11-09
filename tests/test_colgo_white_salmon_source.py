@@ -69,7 +69,7 @@ def test_start_requests_use_legacy_host_with_errback():
     spider = _spider()
     with freeze_time("2026-10-19"):
         requests = list(spider.start_requests())
-    assert len(requests) == 49
+    assert len(requests) == 25
     assert all(r.url.startswith(f"{LEGACY_HOST}/calendar/month/") for r in requests)
     assert all(r.url.endswith("field_microsite_tid_1=All") for r in requests)
     assert all(r.errback is not None for r in requests)

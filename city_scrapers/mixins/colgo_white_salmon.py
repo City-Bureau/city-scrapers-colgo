@@ -53,7 +53,6 @@ from dateutil.relativedelta import relativedelta
 from scrapy import signals
 from twisted.python.failure import Failure
 
-
 # En dash used as a separator in some titles ("CityLab Board Meeting – Canceled")
 TITLE_RE = re.compile(r"–")
 

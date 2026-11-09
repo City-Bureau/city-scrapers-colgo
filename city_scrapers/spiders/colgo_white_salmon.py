@@ -1,4 +1,4 @@
-from city_scrapers_core.constants import CITY_COUNCIL, COMMISSION, COMMITTEE, BOARD
+from city_scrapers_core.constants import BOARD, CITY_COUNCIL, COMMISSION, COMMITTEE
 
 from city_scrapers.mixins.colgo_white_salmon import WhiteSalmonMixin
 

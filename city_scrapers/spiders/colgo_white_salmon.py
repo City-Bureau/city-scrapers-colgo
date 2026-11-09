@@ -91,7 +91,6 @@ spider_configs = [
         "meeting_keyword": "wildfire-emergency-preparedness-committee",
         "classification": COMMITTEE,
     },
-
 ]
 
 

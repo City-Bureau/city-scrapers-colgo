@@ -1,13 +1,12 @@
-from city_scrapers_core.constants import CITY_COUNCIL, COMMISSION
+from city_scrapers_core.constants import BOARD, CITY_COUNCIL, COMMISSION, COMMITTEE
 
-from city_scrapers.mixins.white_salmon import WhiteSalmonMixin
+from city_scrapers.mixins.colgo_white_salmon import WhiteSalmonMixin
 
 spider_configs = [
     {
         "class_name": "ColgoWhiteSalmonCityCouncilSpider",
         "name": "colgo_white_salmon_city_council",
         "agency": "City Council of White Salmon",
-        "agency_id": "27",
         "meeting_keyword": "city-council",
         "classification": CITY_COUNCIL,
         "default_description": (
@@ -28,12 +27,12 @@ spider_configs = [
             "provides legal guidance to ensure compliance with applicable laws "
             "and regulations in all City discussions, decisions, and actions."
         ),
+        "is_main": True,
     },
     {
         "class_name": "ColgoWhiteSalmonCivilServiceSpider",
         "name": "colgo_white_salmon_civil_service",
         "agency": "White Salmon Civil Service Commission",
-        "agency_id": "231",
         "meeting_keyword": "civil-service-commission",
         "classification": COMMISSION,
     },
@@ -41,9 +40,57 @@ spider_configs = [
         "class_name": "ColgoWhiteSalmonPlanningSpider",
         "name": "colgo_white_salmon_planning",
         "agency": "White Salmon Planning Commission",
-        "agency_id": "28",
         "meeting_keyword": "planning-commission",
         "classification": COMMISSION,
+    },
+    {
+        "class_name": "ColgoWhiteSalmonPersonnelFinanceSpider",
+        "name": "colgo_white_salmon_personnel_finance",
+        "agency": "White Salmon Personnel and Finance Committee",
+        "meeting_keyword": "personnel-and-finance-committee",
+        "classification": COMMITTEE,
+    },
+    {
+        "class_name": "ColgoWhiteSalmonCityOperationsSpider",
+        "name": "colgo_white_salmon_city_operations",
+        "agency": "White Salmon City Operations Committee",
+        "meeting_keyword": "city-operations-committee",
+        "classification": COMMITTEE,
+    },
+    {
+        "class_name": "ColgoWhiteSalmonCommunityDevelopmentSpider",
+        "name": "colgo_white_salmon_community_development",
+        "agency": "White Salmon Community Development Committee",
+        "meeting_keyword": "community-development-committee",
+        "classification": COMMITTEE,
+    },
+    {
+        "class_name": "ColgoWhiteSalmonLodgingTaxSpider",
+        "name": "colgo_white_salmon_lodging_tax",
+        "agency": "White Salmon Lodging Tax Committee",
+        "meeting_keyword": "lodging-tax-committee",
+        "classification": COMMITTEE,
+    },
+    {
+        "class_name": "ColgoWhiteSalmonTreeBoardSpider",
+        "name": "colgo_white_salmon_tree_board",
+        "agency": "White Salmon Tree Board",
+        "meeting_keyword": "tree-board",
+        "classification": BOARD,
+    },
+    {
+        "class_name": "ColgoWhiteSalmonCityLABBoardSpider",
+        "name": "colgo_white_salmon_citylab_board",
+        "agency": "White Salmon CityLAB Board",
+        "meeting_keyword": "citylab-board",
+        "classification": BOARD,
+    },
+    {
+        "class_name": "ColgoWhiteSalmonWildfireEmergencyPreparednessSpider",
+        "name": "colgo_white_salmon_wildfire_emergency_preparedness",
+        "agency": "White Salmon Wildfire and Emergency Preparedness Committee",
+        "meeting_keyword": "wildfire-emergency-preparedness-committee",
+        "classification": COMMITTEE,
     },
 ]
 

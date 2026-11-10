@@ -7,13 +7,8 @@ from city_scrapers_core.constants import BOARD, CITY_COUNCIL, COMMISSION, NOT_CL
 
 from city_scrapers.mixins.colgo_dalles_city import DallesCityMixin
 
-# Used when a calendar event has no location
-default_location = {
-    "name": "Location unavailable",
-    "address": "Check source or agenda for location details",
-}
-
-# Configuration for each spider
+# Configuration for each spider. Every agency meets at City Hall, which is the
+# location used when a calendar event or Open Media session has none.
 spider_configs = [
     {
         "class_name": "ColgoDallesCityCouncilSpider",
@@ -21,11 +16,8 @@ spider_configs = [
         "agency": "The Dalles City Council",
         "category_id": "1",
         "calendar_title_pattern": r"city council",
-        # The 2nd Monday City Council series has no location in the calendar
-        "location": DallesCityMixin.city_hall,
         "time_notes": "",
         "_classification": CITY_COUNCIL,
-        "is_main": True,
     },
     {
         "class_name": "ColgoDallesInformationalSpider",
@@ -33,7 +25,6 @@ spider_configs = [
         "agency": "The Dalles Informational or Town Hall Meetings",
         "category_id": "2",
         "calendar_title_pattern": r"informational|town hall",
-        "location": default_location,
         "time_notes": "",
         "_classification": NOT_CLASSIFIED,
     },
@@ -43,7 +34,6 @@ spider_configs = [
         "agency": "The Dalles Planning Commission",
         "category_id": "3",
         "calendar_title_pattern": r"planning commission",
-        "location": default_location,
         "time_notes": "",
         "_classification": COMMISSION,
     },
@@ -53,7 +43,6 @@ spider_configs = [
         "agency": "The Dalles Historic Landmarks Commission",
         "category_id": "4",
         "calendar_title_pattern": r"historic landmarks",
-        "location": default_location,
         "time_notes": "",
         "_classification": COMMISSION,
     },
@@ -63,7 +52,6 @@ spider_configs = [
         "agency": "The Dalles Urban Renewal Agency",
         "category_id": "5",
         "calendar_title_pattern": r"urban renewal",
-        "location": default_location,
         "time_notes": "",
         "_classification": BOARD,
     },

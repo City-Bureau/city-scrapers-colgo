@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 import scrapy
 from city_scrapers_core.items import Meeting
 from city_scrapers_core.spiders import CityScrapersSpider
+from dateutil.relativedelta import relativedelta
 from dateutil.rrule import rrulestr
 from scrapy import signals
 from twisted.python.failure import Failure
@@ -37,7 +38,6 @@ class DallesCityMixinMeta(type):
                 "name",
                 "category_id",
                 "calendar_title_pattern",
-                "location",
                 "_classification",
             ]
             missing_vars = [var for var in required_static_vars if var not in dct]
@@ -66,7 +66,6 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
     agency = None
     category_id = None
     calendar_title_pattern = None
-    location = None
     time_notes = None
 
     timezone = "America/Los_Angeles"
@@ -79,6 +78,8 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
     calendar_page_url = "https://www.thedalles.gov/calendar.php"
     # Revize calendar id of "City Public Meetings"
     public_meetings_calendar = "1"
+
+    # Default location for all agencies.
     city_hall = {
         "name": "City Hall",
         "address": "313 Court Street, The Dalles, OR 97058",
@@ -87,8 +88,16 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
     # A session only gets matched to a meeting of the same kind
     meeting_kinds = ("work session", "executive session", "special")
 
+    # Agenda notes in session titles, e.g. "Zoom Login on Agenda", "see agenda
+    # for ZOOM login", "UPDATED ZOOM LINK ON AGENDA"
+    login_note_pattern = (
+        r"(?:updated\s+|see agenda for\s+)?(?:zoom\s+)?\b(?:log\s?in|link)\b[^,|]*"
+    )
+
     # How far ahead to expand recurring calendar events
     recurrence_horizon_days = 180
+    # How far back sessions missing from the calendar are published as meetings
+    session_lookback_years = 2
 
     page_size = 100
     # Guard against a "next" link that never ends.
@@ -102,7 +111,6 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
         self._failed_requests = 0
         self._other_category_items = 0
         self._bad_rrules = 0
-        self._unmatched_sessions = 0
 
     @classmethod
     def from_crawler(cls, crawler, *args, **kwargs):
@@ -265,8 +273,9 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
             if title not in one_off_titles_by_start[start]:
                 self._add_meeting(meetings, event, start)
 
-        ordered = sorted(meetings.values(), key=lambda pair: pair[0]["start"])
-        self._attach_links([meeting for meeting, _ in ordered])
+        pairs = list(meetings.values())
+        pairs += self._merge_sessions([meeting for meeting, _ in pairs])
+        ordered = sorted(pairs, key=lambda pair: pair[0]["start"])
 
         for meeting, raw_title in ordered:
             # Status from the raw title only: _parse_title strips "CANCELLED", and
@@ -285,8 +294,10 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
     def _is_agency_event(self, event):
         if self.public_meetings_calendar not in (event.get("calendar_displays") or []):
             return False
-        title = self._unescape(event.get("title"))
-        return bool(re.search(self.calendar_title_pattern, title, flags=re.I))
+        return self._is_agency_title(self._unescape(event.get("title")))
+
+    def _is_agency_title(self, title):
+        return bool(re.search(self.calendar_title_pattern, title or "", flags=re.I))
 
     def _event_starts(self, event, horizon):
         """Start times of a calendar event: one, or each rrule occurrence."""
@@ -341,7 +352,13 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
         text = re.sub(r"<br\s*/?>|</p>|</div>|<hr\s*/?>", "\n", text, flags=re.I)
         text = html.unescape(re.sub(r"<[^>]+>", "", text)).replace("\xa0", " ")
         lines = (re.sub(r"[ \t]+", " ", line).strip() for line in text.split("\n"))
-        return "\n".join(line for line in lines if line)
+        # "To view the agenda, click the "Read More" button below." refers to a
+        # button on the city's calendar page
+        return "\n".join(
+            line
+            for line in lines
+            if line and not re.search(r"click.*read more", line, flags=re.I)
+        )
 
     def _link_text(self, match):
         """'<a href="url">text</a>' as 'text (url)'."""
@@ -390,7 +407,10 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
         """Split free-text locations like "Harding House 200 East 4th St"."""
         text = self._unescape(value)
         if not text:
-            return self.location
+            return {
+                "name": "TBD",
+                "address": "",
+            }
         lowered = text.lower()
         if any(s in lowered for s in ("313 court", "city hall", "council chamber")):
             return dict(self.city_hall)
@@ -414,40 +434,123 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
 
     # Links from Open Media sessions
 
-    def _attach_links(self, meetings):
-        """Attach each session's links to the closest same-kind meeting that day."""
+    def _merge_sessions(self, meetings):
+        """
+        Attach each session's links to the closest same-kind meeting that day.
+        Return a (meeting, raw_title) pair for each recent agency session on a
+        day with no calendar meeting, which the calendar is missing.
+        """
         by_date = defaultdict(list)
         for meeting in meetings:
             by_date[meeting["start"].date()].append(meeting)
 
+        cutoff = self._now() - relativedelta(years=self.session_lookback_years)
+        extra = []
         for session in self._sessions:
             start = self._parse_session_start(session)
-            kinds = self._meeting_kinds(session.get("title"))
-            candidates = [
-                meeting
-                for meeting in (by_date.get(start.date(), []) if start else [])
-                if self._meeting_kinds(meeting["title"]) == kinds
-            ]
-            if not candidates:
-                self._unmatched_sessions += 1
-                self.logger.debug(
-                    f"Session {session.get('id')} ({session.get('title')!r}, "
-                    f"{start}) has no matching calendar meeting; links skipped"
+            raw_title = self._unescape(session.get("title"))
+            day = by_date.get(start.date(), []) if start else []
+            kinds = self._meeting_kinds(raw_title)
+            candidates = [m for m in day if self._meeting_kinds(m["title"]) == kinds]
+            if candidates:
+                meeting = min(candidates, key=lambda m: abs(m["start"] - start))
+                self._add_links(meeting, self._parse_links(session))
+            elif start and not day and self._is_agency_title(raw_title):
+                if start >= cutoff:
+                    extra.append((self._session_meeting(session, start), raw_title))
+            else:
+                self.logger.warning(
+                    f"Session {session.get('id')} ({raw_title!r}, {start}) has no "
+                    "matching calendar meeting; links skipped"
                 )
-                continue
-            meeting = min(candidates, key=lambda m: abs(m["start"] - start))
-            hrefs = {link["href"] for link in meeting["links"]}
-            for link in self._parse_links(session):
-                if link["href"] not in hrefs:
-                    hrefs.add(link["href"])
-                    meeting["links"].append(link)
 
-        self.crawler.stats.set_value(
-            "dalles/sessions_without_meeting", self._unmatched_sessions
+        return extra
+
+    def _session_meeting(self, session, start):
+        """A meeting from a session, with its own links."""
+        return Meeting(
+            title=self._parse_session_title(self._unescape(session.get("title"))),
+            description=self._parse_session_description(
+                self._unescape(session.get("title"))
+            ),
+            classification=self._classification,
+            start=start,
+            end=None,
+            all_day=False,
+            time_notes=self.time_notes or "",
+            location=dict(self.city_hall),
+            links=self._parse_links(session),
+            source=f"{self.base_url}/embed/full/sessions/{session.get('id')}",
         )
 
+    def _strip_session_dates(self, raw_title):
+        """Session title without "October 26, 2026" or "11/05/2026" dates."""
+        title = self._parse_title(raw_title)
+        title = re.sub(
+            r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?"
+            r"\s+\d{1,2}(?:st|nd|rd|th)?,?\s*\d{4}",
+            "",
+            title,
+            flags=re.I,
+        )
+        return re.sub(r"\b\d{1,2}([/.-])\d{1,2}\1\d{2,4}\b", "", title)
+
+    def _parse_session_description(self, raw_title):
+        """Agenda notes from the session title, e.g. "Zoom Login on Agenda"."""
+        title = self._strip_session_dates(raw_title)
+        notes = re.findall(self.login_note_pattern, title, flags=re.I)
+        notes = [re.sub(r"\s+", " ", note).strip(" .-") for note in notes]
+        return "\n".join(dict.fromkeys(note for note in notes if note))
+
+    def _parse_session_title(self, raw_title):
+        """
+        "Planning Commission Meeting, 11/05/2026, Login details on Agenda" and
+        "City Council Meeting October 26, 2026 - Livestream" without the date,
+        agenda notes (kept in the description) and streaming notes.
+        """
+        title = self._strip_session_dates(raw_title)
+        title = re.sub(
+            self.login_note_pattern
+            + r"|\bno video\b[^,|]*|\blive\s?stream\b|\brecording\b",
+            "",
+            title,
+            flags=re.I,
+        )
+        # Drop the pieces left empty where the date and notes were, keeping
+        # the separator ("," "|" ":" "." or a spaced dash) between the others.
+        pieces = re.split(
+            r"(\s*[,|:]\s*|\.(?=\s|$)\s*|(?:^|\s+)[-\u2013]+(?=\s|$)\s*)", title
+        )
+        result, separator = "", None
+        for index, piece in enumerate(pieces[0::2]):
+            piece = re.sub(r"\s+", " ", piece).strip(" -")
+            # Words left dangling by a removed date or note, e.g. "Meeting of"
+            piece = re.sub(r"(?:^|\s+)(?:of|no)$", "", piece, flags=re.I)
+            if piece:
+                result += (separator or "") + piece
+                separator = None
+            if result and separator is None and index < len(pieces) // 2:
+                mark = pieces[2 * index + 1].strip()[:1]
+                separator = {",": ", ", ".": ". ", ":": ": ", "|": " | "}.get(
+                    mark, " - "
+                )
+        return result or self.agency
+
+    def _add_links(self, meeting, links):
+        hrefs = {link["href"] for link in meeting["links"]}
+        for link in links:
+            if link["href"] not in hrefs:
+                hrefs.add(link["href"])
+                meeting["links"].append(link)
+
     def _meeting_kinds(self, title):
-        title = (title or "").lower()
+        # "After Executive Session" is the regular meeting reconvening
+        title = re.sub(
+            r"\b(?:after|before|following|return from)\s+(?:ex|exec|executive)\b"
+            r"\.?\s+session",
+            "",
+            (title or "").lower(),
+        )
         return {kind for kind in self.meeting_kinds if kind in title}
 
     def _parse_session_start(self, item):

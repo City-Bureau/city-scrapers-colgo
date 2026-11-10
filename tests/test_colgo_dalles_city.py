@@ -1,6 +1,7 @@
 """
-dalles_city_calendar.json: Revize calendar feed fetched 2026-11-05.
-dalles_city_council_sessions_sample.json: sample sessions API page (category 1).
+colgo_dalles_city_calendar.json: Revize calendar feed fetched 2026-11-05.
+colgo_dalles_city_council.json, colgo_dalles_city_planning_commission.json:
+page 1 of the Open Media sessions API for categories 1 and 3, fetched 2026-11-10.
 """
 
 import json
@@ -9,7 +10,15 @@ from os.path import dirname, join
 from unittest.mock import MagicMock
 
 import pytest
-from city_scrapers_core.constants import CANCELLED, CITY_COUNCIL, PASSED, TENTATIVE
+from city_scrapers_core.constants import (
+    BOARD,
+    CANCELLED,
+    CITY_COUNCIL,
+    COMMISSION,
+    NOT_CLASSIFIED,
+    PASSED,
+    TENTATIVE,
+)
 from city_scrapers_core.utils import file_response
 from freezegun import freeze_time
 from scrapy.http import TextResponse
@@ -27,7 +36,11 @@ calendar_response = file_response(
     join(FILES, "colgo_dalles_city_calendar.json"), url=CALENDAR_URL
 )
 sessions_response = file_response(
-    join(FILES, "colgo_dalles_city_council_sessions_sample.json"), url=API_URL
+    join(FILES, "colgo_dalles_city_council.json"), url=API_URL
+)
+planning_sessions_response = file_response(
+    join(FILES, "colgo_dalles_city_planning_commission.json"),
+    url=API_URL.replace("category=1", "category=3"),
 )
 
 
@@ -57,8 +70,12 @@ def test_start_url():
     assert requests[0].headers.get("Accept") == b"application/json"
 
 
-def test_sessions_then_calendar():
+def test_sessions_next_page_then_calendar():
     requests = list(_spider().parse_sessions(sessions_response))
+    assert [r.url for r in requests] == [API_URL.replace("offset=0", "offset=100")]
+    # Category 3 fits on one page, so the calendar comes next
+    spider = colgo_dalles_city.ColgoDallesPlanningCommissionSpider()
+    requests = list(spider.parse_sessions(planning_sessions_response))
     assert [r.url for r in requests] == [CALENDAR_URL]
 
 
@@ -69,7 +86,9 @@ def test_sessions_failure_still_requests_calendar():
 
 
 def test_count(parsed_items):
-    assert len(parsed_items) == 74
+    # 74 calendar meetings and 8 sessions from the last 2 years on days the
+    # calendar doesn't have
+    assert len(parsed_items) == 82
 
 
 def test_meeting(parsed_items):
@@ -93,13 +112,17 @@ def test_meeting(parsed_items):
     assert item["id"] == "colgo_dalles_city_council/202610261730/x/city_council_meeting"
 
 
+def test_description_drops_read_more_line(parsed_items):
+    assert not any("Read More" in item["description"] for item in parsed_items)
+
+
 def test_recurring_meeting_is_expanded(parsed_items):
     # Generated from the 2nd Monday rrule; not an event in the feed
     item = _by_start(parsed_items, 2026, 11, 9, 17, 30)
     assert item["title"] == "City Council Meeting"
     assert item["status"] == TENTATIVE
-    # The 2nd Monday record has a blank location; falls back to City Hall
-    assert item["location"]["name"] == "City Hall"
+    # The 2nd Monday record has a blank location
+    assert item["location"] == {"name": "TBD", "address": ""}
 
 
 def test_exdate_replaced_by_one_off_event(parsed_items):
@@ -138,6 +161,10 @@ def test_links(parsed_items):
     # Session 542 stores real UTC: "2026-10-27T00:30:00Z"
     assert _by_start(parsed_items, 2026, 10, 26, 17, 30)["links"] == [
         {
+            "href": "https://www.youtube.com/live/hx7sBT3Ix_M?si=bRu3Uihs52tx_SSD",
+            "title": "Video",
+        },
+        {
             "href": "https://dcwecje7bjjjc.cloudfront.net/media/16/documents/CC_2026-10-26_City_Council_Agenda.pdf",  # noqa
             "title": "Agenda",
         },
@@ -148,12 +175,12 @@ def test_links(parsed_items):
     ]
     # Session 538 stores Pacific wall-clock time: "2026-09-28T17:30:00Z"
     assert _by_start(parsed_items, 2026, 9, 28, 17, 30)["links"][0] == {
-        "href": "https://www.youtube.com/live/iKqgJNyA3-o?si=gEXPw3OpnOz1Pf0_",
+        "href": "https://www.youtube.com/live/gY1nIQjsoFQ?si=qUNZFa5V-JqYpaaK",
         "title": "Video",
     }
 
 
-def test_work_session_not_matched_to_regular_meeting():
+def test_work_session_not_matched_to_regular_meeting(caplog):
     spider = _spider()
     spider._sessions = [
         {
@@ -165,9 +192,62 @@ def test_work_session_not_matched_to_regular_meeting():
     ]
     meeting = {"title": "City Council Meeting", "start": datetime(2026, 11, 9, 17, 30)}
     meeting["links"] = []
-    spider._attach_links([meeting])
+    # The day has a calendar meeting, so the session adds no meeting either
+    assert spider._merge_sessions([meeting]) == []
     assert meeting["links"] == []
-    assert spider._unmatched_sessions == 1
+    assert "has no matching calendar meeting" in caplog.text
+
+
+def test_session_without_calendar_meeting_is_published():
+    # The calendar only has cancellations for the Planning Commission
+    spider = colgo_dalles_city.ColgoDallesPlanningCommissionSpider()
+    spider.crawler = MagicMock()
+    with freeze_time("2026-11-05"):
+        list(spider.parse_sessions(planning_sessions_response))
+        items = list(spider.parse(calendar_response))
+    # Session 546 "Planning Commission Meeting, 11/05/2026, Login details on Agenda"
+    item = _by_start(items, 2026, 11, 5, 17, 30)
+    assert item["title"] == "Planning Commission Meeting"
+    assert item["description"] == "Login details on Agenda"
+    assert item["location"]["name"] == "City Hall"
+    assert item["status"] == TENTATIVE
+    assert item["source"] == (
+        "https://thedalles-oregon.ompnetwork.org/embed/full/sessions/546"
+    )
+    assert item["links"][1] == {
+        "href": "https://dcwecje7bjjjc.cloudfront.net/media/16/documents/2026-11-05_PC_Agenda.pdf",  # noqa
+        "title": "Agenda",
+    }
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (
+            "City Council Meeting 7/13/20 Zoom Login at top of agenda",
+            "City Council Meeting",
+        ),
+        (
+            "Urban Renewal Agency Meeting, 02/18/2025. Zoom Login on Agenda",
+            "Urban Renewal Agency Meeting",
+        ),
+        (
+            "Urban Renewal Agency, After Executive Session, 02/18/2025",
+            "Urban Renewal Agency, After Executive Session",
+        ),
+        (
+            "Urban Renewal Agency Meeting, 05/16/2023, Part 1, Zoom Login on Agenda",
+            "Urban Renewal Agency Meeting, Part 1",
+        ),
+    ],
+)
+def test_session_title(raw, expected):
+    assert _spider()._parse_session_title(raw) == expected
+
+
+def test_old_sessions_without_calendar_meeting_are_skipped(parsed_items):
+    session_starts = [i["start"] for i in parsed_items if "ompnetwork" in i["source"]]
+    assert min(session_starts) >= datetime(2024, 11, 5)
 
 
 def test_calendar_not_json_raises():
@@ -181,3 +261,18 @@ def test_zero_meetings_reports_error():
     list(spider.parse(TextResponse(url=CALENDAR_URL, body=b"[]")))
     spider._on_spider_closed(spider, "finished")
     spider.crawler.signals.send_catch_log.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "class_name,category_id,classification",
+    [
+        ("ColgoDallesInformationalSpider", "2", NOT_CLASSIFIED),
+        ("ColgoDallesPlanningCommissionSpider", "3", COMMISSION),
+        ("ColgoDallesHistoricLandmarksSpider", "4", COMMISSION),
+        ("ColgoDallesUrbanRenewalSpider", "5", BOARD),
+    ],
+)
+def test_other_spiders(class_name, category_id, classification):
+    spider = getattr(colgo_dalles_city, class_name)()
+    assert spider.category_id == category_id
+    assert spider._classification == classification

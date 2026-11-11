@@ -132,6 +132,10 @@ class WhiteSalmonMixin(CityScrapersSpider):
     # Number of months to scrape into the future
     months_ahead = 12
 
+    # True for bodies that may have no meetings on the calendar: a run where no
+    # calendar event matches meeting_keyword is then a warning, not an error
+    allow_no_meetings = False
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._calendar_requested = 0
@@ -317,7 +321,8 @@ class WhiteSalmonMixin(CityScrapersSpider):
         the scraper or the site: a request failed, the calendar pages listed no
         events at all (the page layout or URL changed), or meeting links were
         followed but none could be parsed. When the calendar pages listed
-        events and none matched meeting_keyword, the calendar simply has no
+        events and none matched meeting_keyword, it is also an error, unless
+        the spider sets allow_no_meetings: then the calendar simply has no
         meetings of this type, which is only a warning.
         """
         problems = []
@@ -330,8 +335,11 @@ class WhiteSalmonMixin(CityScrapersSpider):
             problems.append(
                 f"0 meetings parsed from {self._meetings_matched} meeting page(s)"
             )
-        elif no_meetings and self._failed_requests:
-            problems.append("0 meetings parsed")
+        elif no_meetings and (self._failed_requests or not self.allow_no_meetings):
+            problems.append(
+                f"0 meetings parsed: no calendar events matched "
+                f"{self.meeting_keyword!r}"
+            )
 
         summary = (
             f"(finish_reason={reason}, "

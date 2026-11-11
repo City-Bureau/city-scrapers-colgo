@@ -114,6 +114,15 @@ CLASSIFICATIONS = {
 }
 
 
+# Bodies that may have no meetings on the calendar; every other spider reports
+# an error to Sentry when a run finds 0 meetings
+ALLOW_NO_MEETINGS = {
+    "ColgoWhiteSalmonCivilServiceSpider",
+    "ColgoWhiteSalmonLodgingTaxSpider",
+    "ColgoWhiteSalmonWildfireEmergencyPreparednessSpider",
+}
+
+
 def test_every_configured_spider_is_tested():
     assert set(CLASSIFICATIONS) == {c["class_name"] for c in spider_configs}
 
@@ -125,6 +134,7 @@ def test_spider_attributes(class_name):
     assert spider.classification == CLASSIFICATIONS[class_name]
     assert spider.meeting_keyword
     assert not hasattr(spider, "agency_id")
+    assert spider.allow_no_meetings is (class_name in ALLOW_NO_MEETINGS)
 
 
 # ============================================================================

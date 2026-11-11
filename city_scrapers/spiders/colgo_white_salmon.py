@@ -35,6 +35,8 @@ spider_configs = [
         "agency": "White Salmon Civil Service Commission",
         "meeting_keyword": "civil-service-commission",
         "classification": COMMISSION,
+        # May have no meetings on the calendar: warn instead of erroring
+        "allow_no_meetings": True,
     },
     {
         "class_name": "ColgoWhiteSalmonPlanningSpider",
@@ -70,6 +72,8 @@ spider_configs = [
         "agency": "White Salmon Lodging Tax Committee",
         "meeting_keyword": "lodging-tax-committee",
         "classification": COMMITTEE,
+        # May have no meetings on the calendar: warn instead of erroring
+        "allow_no_meetings": True,
     },
     {
         "class_name": "ColgoWhiteSalmonTreeBoardSpider",
@@ -91,6 +95,8 @@ spider_configs = [
         "agency": "White Salmon Wildfire and Emergency Preparedness Committee",
         "meeting_keyword": "wildfire-emergency-preparedness-committee",
         "classification": COMMITTEE,
+        # May have no meetings on the calendar: warn instead of erroring
+        "allow_no_meetings": True,
     },
 ]
 

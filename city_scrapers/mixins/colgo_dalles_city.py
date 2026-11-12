@@ -407,10 +407,7 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
         """Split free-text locations like "Harding House 200 East 4th St"."""
         text = self._unescape(value)
         if not text:
-            return {
-                "name": "TBD",
-                "address": "",
-            }
+            return dict(self.city_hall)
         lowered = text.lower()
         if any(s in lowered for s in ("313 court", "city hall", "council chamber")):
             return dict(self.city_hall)

@@ -121,8 +121,8 @@ def test_recurring_meeting_is_expanded(parsed_items):
     item = _by_start(parsed_items, 2026, 11, 9, 17, 30)
     assert item["title"] == "City Council Meeting"
     assert item["status"] == TENTATIVE
-    # The 2nd Monday record has a blank location
-    assert item["location"] == {"name": "TBD", "address": ""}
+    # The 2nd Monday record has a blank location; falls back to City Hall
+    assert item["location"]["name"] == "City Hall"
 
 
 def test_exdate_replaced_by_one_off_event(parsed_items):

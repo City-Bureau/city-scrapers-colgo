@@ -18,6 +18,7 @@ spider_configs = [
         "calendar_title_pattern": r"city council",
         "time_notes": "",
         "_classification": CITY_COUNCIL,
+        "is_main": True,
     },
     {
         "class_name": "ColgoDallesInformationalSpider",

@@ -250,6 +250,17 @@ def test_old_sessions_without_calendar_meeting_are_skipped(parsed_items):
     assert min(session_starts) >= datetime(2024, 11, 5)
 
 
+@pytest.mark.parametrize(
+    "title,name",
+    [
+        ("City Council Special Meeting April 21, 2025 - Live Stream", "City Hall"),
+        ("City Council Goal Setting Work Session November 6, 2025", "TBD"),
+    ],
+)
+def test_session_location(title, name):
+    assert _spider()._parse_session_location(title)["name"] == name
+
+
 def test_calendar_not_json_raises():
     response = TextResponse(url=CALENDAR_URL, body=b"<html></html>")
     with pytest.raises(DallesApiError, match="calendar did not return JSON"):

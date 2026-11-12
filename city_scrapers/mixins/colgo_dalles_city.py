@@ -475,10 +475,19 @@ class DallesCityMixin(CityScrapersSpider, metaclass=DallesCityMixinMeta):
             end=None,
             all_day=False,
             time_notes=self.time_notes or "",
-            location=dict(self.city_hall),
+            location=self._parse_session_location(session.get("title")),
             links=self._parse_links(session),
             source=f"{self.base_url}/embed/full/sessions/{session.get('id')}",
         )
+
+    def _parse_session_location(self, title):
+        """
+        Sessions have no location. Regular and special meetings are at City Hall;
+        work sessions (goal setting, joint sessions) are often held elsewhere.
+        """
+        if "work session" in (title or "").lower():
+            return {"name": "TBD", "address": ""}
+        return dict(self.city_hall)
 
     def _strip_session_dates(self, raw_title):
         """Session title without "October 26, 2026" or "11/05/2026" dates."""

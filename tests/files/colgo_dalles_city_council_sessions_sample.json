@@ -1,0 +1,40 @@
+{
+  "count": 3,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": 542,
+      "title": "City Council Meeting October 26, 2026 - Livestream",
+      "category": {"id": 1, "name": "City Council"},
+      "start_date": "2026-10-27T00:30:00Z",
+      "created_at": "2026-10-18T16:02:11Z",
+      "video_url": "",
+      "documents": [
+        {"type": "agenda", "label": "Agenda", "file": "https://dcwecje7bjjjc.cloudfront.net/media/16/documents/CC_2026-10-26_City_Council_Agenda.pdf", "link": ""},
+        {"type": "packet", "label": "Packet", "file": "https://dcwecje7bjjjc.cloudfront.net/media/16/documents/CC_2026-10-26_City_Council_Agenda_Z4o6TlC.pdf", "link": ""}
+      ]
+    },
+    {
+      "id": 538,
+      "title": "City Council Meeting September 28, 2026 - Livestream",
+      "category": {"id": 1, "name": "City Council"},
+      "start_date": "2026-09-28T17:30:00Z",
+      "created_at": "2026-09-21T15:40:00Z",
+      "video_url": "https://www.youtube.com/live/iKqgJNyA3-o?si=gEXPw3OpnOz1Pf0_",
+      "documents": [
+        {"type": "minutes", "label": "", "file": "", "link": "https://example.org/minutes-2026-09-28.pdf"},
+        {"type": "agenda", "label": "Agenda", "file": "", "link": ""}
+      ]
+    },
+    {
+      "id": 101,
+      "title": "City Council Meeting March 9, 2020",
+      "category": {"id": 1, "name": "City Council"},
+      "start_date": "2020-03-09T17:30:00Z",
+      "created_at": "2020-03-01T12:00:00Z",
+      "video_url": "https://www.youtube.com/watch?v=old",
+      "documents": []
+    }
+  ]
+}
